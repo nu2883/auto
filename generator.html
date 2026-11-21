@@ -1,0 +1,1512 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dynamic Step Script Generator v2</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.min.js"></script>
+  <style type="text/tailwindcss">
+    @layer components {
+      .inp { @apply w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm focus:border-emerald-500 focus:outline-none; }
+      .lbl { @apply block text-slate-400 mb-1; }
+      .chk { @apply w-full flex items-center gap-2 bg-slate-900 border border-slate-700 px-2.5 py-2 rounded-lg cursor-pointer; }
+      .btn { @apply px-2.5 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg transition disabled:opacity-30 disabled:cursor-not-allowed; }
+      .btn-mini { @apply px-2 py-1 text-xs bg-slate-900 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 disabled:opacity-30; }
+    }
+  </style>
+  <style>
+    [v-cloak] { display: none; }
+    ::-webkit-scrollbar { width: 7px; height: 7px; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    .drop-over { box-shadow: 0 -3px 0 0 #34d399; }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans antialiased">
+  <div id="app" v-cloak class="max-w-7xl mx-auto p-4 md:p-6">
+    <!-- HEADER -->
+    <header class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-5">
+      <div>
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <h1 class="text-xl md:text-2xl font-bold text-emerald-400 tracking-tight">Dynamic Step Script Generator</h1>
+          <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">v2 · Auto-Save</span>
+        </div>
+        <p class="text-xs md:text-sm text-slate-400 mt-1">
+          Susun langkah automasi FE, seret untuk mengurutkan, simpan sebagai profil, lalu salin / unduh skrip atau jadikan bookmarklet.
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button class="btn" :disabled="histIdx <= 0" @click="undo" title="Ctrl+Z">↶ Undo</button>
+        <button class="btn" :disabled="histIdx >= hist.length - 1" @click="redo" title="Ctrl+Y">↷ Redo</button>
+        <button class="btn" @click="exportJson">Export JSON</button>
+        <label class="btn cursor-pointer">Import JSON<input type="file" accept=".json" @change="importJson" class="hidden" /></label>
+        <button class="px-3 py-1.5 text-xs font-medium bg-rose-950/70 hover:bg-rose-900/70 text-rose-200 border border-rose-800/70 rounded-lg transition" @click="resetDefault">Reset Awal</button>
+      </div>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <!-- KIRI: BUILDER -->
+      <div class="lg:col-span-7 space-y-4">
+        <!-- Profil -->
+        <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 space-y-2">
+          <span class="block text-xs font-semibold text-sky-400">Profil Tersimpan (banyak alur kerja)</span>
+          <div class="flex flex-wrap gap-2 text-xs">
+            <select v-model="selProfile" class="inp !w-auto min-w-[10rem]">
+              <option value="">— pilih profil —</option>
+              <option v-for="(p, name) in profiles" :key="name" :value="name">{{ name }}</option>
+            </select>
+            <button class="btn" :disabled="!selProfile" @click="loadProfile">Muat</button>
+            <button class="btn !text-rose-300" :disabled="!selProfile" @click="deleteProfile">Hapus</button>
+            <span class="text-slate-600 hidden sm:inline">|</span>
+            <input v-model="newProfileName" @keyup.enter="saveProfile" placeholder="Nama profil baru…" class="inp !w-44" />
+            <button class="btn !text-emerald-300" @click="saveProfile">Simpan Profil</button>
+          </div>
+        </div>
+
+        <!-- Pengaturan global & tambah langkah -->
+        <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 space-y-3">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <label class="chk !w-auto"><input type="checkbox" v-model="globalCfg.tampilkanLog" class="accent-emerald-500" /><span>Kotak status saat berjalan</span></label>
+            <label class="chk !w-auto"><input type="checkbox" v-model="globalCfg.lanjutJikaError" class="accent-emerald-500" /><span>Lanjut walau langkah error</span></label>
+            <label class="chk !w-auto"><input type="checkbox" v-model="globalCfg.sorotFokus" class="accent-emerald-500" /><span>Sorot elemen yang difokus</span></label>
+            <div class="flex items-center gap-2 ml-auto">
+              <span class="text-slate-400">Jeda antar langkah:</span>
+              <input v-model.number="globalCfg.jedaDefaultMs" type="number" min="0" step="50" class="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 font-mono text-center focus:border-emerald-500 focus:outline-none" />
+              <span class="text-slate-400">ms</span>
+            </div>
+          </div>
+          <details class="text-xs pt-2 border-t border-slate-700/70">
+            <summary class="cursor-pointer text-sky-400 font-semibold select-none">Variabel Data ({{ (globalCfg.variabel || []).length }}) — pakai <code>{nama}</code> di isian langkah mana pun</summary>
+            <div class="mt-2 space-y-1.5">
+              <div v-for="(v, vi) in globalCfg.variabel" :key="vi" class="flex gap-2 items-center">
+                <input v-model="v.k" placeholder="nama" class="inp !w-32 font-mono" />
+                <input v-model="v.v" placeholder="nilai (boleh pakai {hari_ini})" class="inp" />
+                <button class="text-rose-400 hover:text-rose-300 px-1.5" @click="globalCfg.variabel.splice(vi, 1)">✕</button>
+              </div>
+              <button class="btn" @click="globalCfg.variabel.push({ k: '', v: '' })">+ Tambah Variabel</button>
+            </div>
+          </details>
+        </div>
+
+        <!-- Bar tambah langkah (sticky, dropdown) -->
+        <div class="sticky top-2 z-30 bg-slate-900/95 backdrop-blur border border-amber-500/30 rounded-xl p-2 shadow-lg shadow-black/40">
+          <div class="flex items-center gap-2">
+            <div class="relative">
+              <button @click.stop="menuOpen = !menuOpen" class="px-3 py-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg flex items-center gap-1.5">+ Tambah Langkah <span>{{ menuOpen ? '▴' : '▾' }}</span></button>
+              <div v-if="menuOpen" @click.stop class="absolute left-0 top-full mt-1.5 w-64 max-h-[70vh] overflow-auto bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-1 z-40">
+                <button v-for="t in stepTypes" :key="t.type" @click="addStep(t.type); menuOpen = false"
+                  class="w-full text-left px-3 py-2 text-xs rounded-lg text-slate-200 hover:bg-emerald-600/20 hover:text-emerald-300">+ {{ t.label }}</button>
+              </div>
+            </div>
+            <span class="text-[11px] text-slate-400 whitespace-nowrap">{{ activeStepsCount }}/{{ steps.length }} aktif</span>
+            <div class="ml-auto flex gap-1 shrink-0" v-if="steps.length">
+              <button class="btn-mini whitespace-nowrap" @click="setAllAktif(true)" title="Centang semua langkah (aktifkan semua)">☑ Semua</button>
+              <button class="btn-mini whitespace-nowrap" @click="setAllAktif(false)" title="Hapus centang semua langkah (nonaktifkan semua)">☐ Kosongkan</button>
+              <button class="btn-mini whitespace-nowrap" @click="balikAktif" title="Balik: yang aktif jadi nonaktif dan sebaliknya">⇄ Balik</button>
+              <span class="text-slate-700 px-0.5">|</span>
+              <button class="btn-mini whitespace-nowrap" @click="toggleAll(true)">▸ Ciutkan</button>
+              <button class="btn-mini whitespace-nowrap" @click="toggleAll(false)">▾ Buka</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="!steps.length" class="bg-slate-800/40 border border-dashed border-slate-700 rounded-xl p-8 text-center text-sm text-slate-400">
+          Belum ada langkah. Klik salah satu tombol <strong>+ Tambah Langkah Baru</strong> di atas.
+        </div>
+
+        <!-- DAFTAR LANGKAH -->
+        <div v-for="(step, idx) in steps" :key="step.id" data-card
+          @dragover.prevent="overIdx = idx" @drop.prevent="onDrop(idx)"
+          :class="[step.aktif ? 'border-slate-700/90 bg-slate-800/75' : 'border-slate-800 bg-slate-900/50 opacity-65', overIdx === idx && dragIdx !== null && dragIdx !== idx ? 'drop-over' : '', stepWarn(step).length && step.aktif ? '!border-amber-500/60' : '']"
+          class="border rounded-xl p-4 space-y-3 transition">
+          <div class="flex flex-wrap items-center justify-between gap-2" :class="{'border-b border-slate-700/70 pb-2.5': !step.collapsed && step.aktif}">
+            <div class="flex items-center gap-2 min-w-0">
+              <span draggable="true" @dragstart="onDragStart(idx, $event)" @dragend="dragIdx = null; overIdx = null"
+                title="Seret untuk mengurutkan" class="cursor-grab select-none text-slate-500 hover:text-slate-300 px-1">⠿</span>
+              <input type="checkbox" v-model="step.aktif" title="Aktif / nonaktif" class="w-4 h-4 accent-emerald-500 rounded cursor-pointer" />
+              <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-900 text-amber-300 border border-slate-700">#{{ idx + 1 }}</span>
+              <input v-model="step.nama" type="text" class="bg-transparent font-semibold text-sm text-emerald-400 focus:bg-slate-900 focus:px-2 py-0.5 rounded focus:outline-none min-w-0" />
+              <span v-if="stepWarn(step).length && step.aktif" class="text-[11px] text-amber-400" :title="stepWarn(step).join(', ')">⚠ {{ stepWarn(step).length }}</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <button class="btn-mini" @click="toggleCollapse(step)" :title="step.collapsed ? 'Buka' : 'Ciutkan'">{{ step.collapsed ? '▸' : '▾' }}</button>
+              <button class="btn-mini" @click="moveStep(idx, -1)" :disabled="idx === 0" title="Naik">↑</button>
+              <button class="btn-mini" @click="moveStep(idx, 1)" :disabled="idx === steps.length - 1" title="Turun">↓</button>
+              <button class="btn-mini" @click="duplicateStep(idx)">Duplikat</button>
+              <button class="px-2 py-1 text-xs bg-rose-950/60 hover:bg-rose-800/70 text-rose-300 rounded border border-rose-800/50" @click="removeStep(idx)">Hapus</button>
+            </div>
+          </div>
+
+          <p v-if="step.collapsed && step.aktif" class="text-[11px] text-slate-400 font-mono truncate">{{ ringkas(step) }}</p>
+
+          <div v-if="step.aktif && !step.collapsed" class="space-y-3 pt-1 text-xs">
+            <!-- Langkah berbasis skema -->
+            <div v-if="fields[step.type]" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <template v-for="f in fields[step.type]">
+                <div v-if="!f.if || f.if(step.cfg)" :key="f.k" :class="f.t === 'check' ? 'flex items-end' : ''">
+                  <label v-if="f.t === 'check'" class="chk"><input type="checkbox" v-model="step.cfg[f.k]" class="accent-emerald-500 rounded" /><span>{{ f.l }}</span></label>
+                  <template v-else>
+                    <label class="lbl">{{ f.l }}</label>
+                    <select v-if="f.t === 'select'" v-model="step.cfg[f.k]" class="inp"><option v-for="o in f.o" :key="o[0]" :value="o[0]">{{ o[1] }}</option></select>
+                    <input v-else-if="f.t === 'num'" v-model.number="step.cfg[f.k]" type="number" min="0" :step="f.step || 50" class="inp font-mono" />
+                    <input v-else v-model="step.cfg[f.k]" type="text" :placeholder="f.p" class="inp" />
+                  </template>
+                </div>
+              </template>
+            </div>
+            <p v-if="hints[step.type]" class="text-[11px] text-sky-300/80">💡 {{ hints[step.type] }}</p>
+
+            <!-- Urutan tombol -->
+            <div v-if="['find_text_keys', 'click_text', 'fill_input', 'press_keys'].indexOf(step.type) >= 0" class="bg-slate-900/90 border border-slate-700/80 rounded-lg p-3 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-300 font-medium">Urutan tombol setelah teks ditemukan / aksi / pengisian (opsional, boleh kosong):</span>
+                <button @click="step.cfg.urutanKey.push({ key: 'Enter', count: 1 })" class="px-2 py-1 text-[11px] bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded">+ Tambah Tombol</button>
+              </div>
+              <div v-for="(k, kIdx) in step.cfg.urutanKey" :key="kIdx" class="flex items-center gap-2">
+                <span class="text-slate-500 font-mono w-5">{{ kIdx + 1 }}.</span>
+                <select v-model="k.key" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs focus:border-emerald-500 focus:outline-none">
+                  <option v-for="o in keyOpts" :key="o[0]" :value="o[0]">{{ o[1] }}</option>
+                </select>
+                <span class="text-slate-400">sebanyak</span>
+                <input v-model.number="k.count" type="number" min="1" max="20" class="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-center focus:border-emerald-500 focus:outline-none" />
+                <span class="text-slate-400">kali</span>
+                <button v-if="step.type !== 'find_text_keys' || step.cfg.urutanKey.length > 1" @click="step.cfg.urutanKey.splice(kIdx, 1)" class="ml-auto text-rose-400 hover:text-rose-300 px-1.5">✕</button>
+              </div>
+            </div>
+
+            <!-- JS kustom -->
+            <div v-if="step.type === 'custom_js'">
+              <label class="lbl">Kode JavaScript async (tersedia: <code>await sleep(ms)</code>, <code>log(...)</code>, <code>henti(...)</code>, <code>tok(...)</code>, <code>cariElemenTeks(...)</code>)</label>
+              <textarea v-model="step.cfg.kode" rows="4" spellcheck="false" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 font-mono text-xs text-amber-200 focus:border-emerald-500 focus:outline-none"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KANAN: OUTPUT -->
+      <div class="lg:col-span-5">
+        <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 flex flex-col lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)]">
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div>
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-emerald-400">Output ({{ activeStepsCount }} Langkah Aktif)</h2>
+              <p class="text-[11px] text-slate-400">{{ outputText.split('\n').length }} baris · {{ outputText.length.toLocaleString('id-ID') }} karakter · tersimpan otomatis</p>
+            </div>
+            <button @click="copyOutput" :class="copied ? 'bg-emerald-600 text-white' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'" class="px-4 py-1.5 text-xs font-bold rounded-lg transition shadow-sm">{{ copied ? '✓ Tersalin!' : 'Salin' }}</button>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-1.5 mb-2 text-xs">
+            <button class="btn" :class="outTab === 'script' ? '!bg-emerald-600/25 !border-emerald-500/50 !text-emerald-300' : ''" @click="outTab = 'script'">Script</button>
+            <button class="btn" :class="outTab === 'bookmarklet' ? '!bg-emerald-600/25 !border-emerald-500/50 !text-emerald-300' : ''" @click="outTab = 'bookmarklet'">Bookmarklet</button>
+            <label class="chk !w-auto !py-1 ml-auto"><input type="checkbox" v-model="globalCfg.ringkas" class="accent-emerald-500" /><span>Ringkas (tanpa komentar)</span></label>
+            <button class="btn" @click="downloadJs">⬇ .js</button>
+          </div>
+
+          <div v-if="warnings.length" class="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-200 space-y-0.5">
+            <div v-for="w in warnings" :key="w.idx">⚠ Langkah #{{ w.idx + 1 }} “{{ w.nama }}”: {{ w.msgs.join(', ') }}</div>
+          </div>
+          <p v-if="outTab === 'bookmarklet'" class="text-[11px] text-slate-400 mb-2">Buat bookmark baru di browser, lalu tempel teks ini sebagai URL-nya. Klik bookmark di halaman target untuk menjalankan. (Beberapa situs dengan CSP ketat dapat memblokirnya — gunakan Console jika begitu.)</p>
+
+          <pre class="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-3.5 text-[11px] leading-relaxed font-mono text-slate-200 overflow-auto min-h-0 max-h-[70vh] lg:max-h-none select-all whitespace-pre-wrap break-all">{{ outputText }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-slate-100 text-slate-900 text-xs font-semibold px-4 py-2 rounded-full shadow-lg z-50">{{ toast }}</div>
+  </div>
+
+  <!-- TEMPLATE DASAR SKRIP -->
+  <script type="text/plain" id="tpl-base">(async () => {
+  // ===== KONFIGURASI LANGKAH DINAMIS =====
+  const TAMPILKAN_LOG = __TAMPILKAN_LOG__
+  const LANJUT_JIKA_ERROR = __LANJUT__
+  const SOROT_FOKUS = __SOROT__
+  const JEDA_ANTAR_LANGKAH = __JEDA_DEFAULT__
+  // DATA: semua nilai isian ada di sini, ubah seperlunya. Langkah memakainya lewat {nama}
+  const DATA = __DATA_BLOCK__
+__PARAMS_BLOCK__
+  // =======================================
+
+  const lama = document.getElementById('nudge-log')
+  if (lama) lama.remove()
+  let box = null
+  let isi = null
+  let batal = false
+  let jangkar = null
+  let terakhir = null
+  const pelacak = (e) => { terakhir = e.target }
+  if (window.__asPelacak) document.removeEventListener('click', window.__asPelacak, true)
+  window.__asPelacak = pelacak
+  document.addEventListener('click', pelacak, true)
+
+  // Kompatibilitas PrimeNG lama (kelas ui-*): beri alias kelas p-* supaya semua langkah ikut bekerja
+  const ALIAS = [['ui-dropdown', 'p-dropdown'], ['ui-dropdown-label', 'p-dropdown-label'], ['ui-dropdown-panel', 'p-dropdown-panel'],
+    ['ui-dropdown-item', 'p-dropdown-item'], ['ui-dropdown-filter', 'p-dropdown-filter'], ['ui-dialog', 'p-dialog'],
+    ['ui-datepicker', 'p-datepicker'], ['ui-chkbox', 'p-checkbox'], ['ui-chkbox-box', 'p-checkbox-box'],
+    ['ui-radiobutton', 'p-radiobutton'], ['ui-radiobutton-box', 'p-radiobutton-box'], ['ui-datatable', 'p-datatable']]
+  const selaraskan = () => {
+    ALIAS.forEach(([a, b]) => document.querySelectorAll('.' + a).forEach((e) => e.classList.add(b)))
+    document.querySelectorAll('.ui-dropdown').forEach((e) => e.classList.toggle('p-disabled', e.classList.contains('ui-state-disabled') || e.classList.contains('ui-dropdown-disabled')))
+  }
+  selaraskan()
+
+  if (TAMPILKAN_LOG) {
+    box = document.createElement('div')
+    box.id = 'nudge-log'
+    Object.assign(box.style, {
+      position: 'fixed', top: '8px', right: '8px', zIndex: 99999, background: '#1f2430',
+      color: '#e8eaf0', font: '12px/1.5 Segoe UI, sans-serif', padding: '10px 12px',
+      borderRadius: '8px', width: '440px', maxHeight: '85vh', display: 'flex',
+      flexDirection: 'column', boxShadow: '0 2px 10px rgba(0,0,0,.4)'
+    })
+    const bar = document.createElement('div')
+    Object.assign(bar.style, { display: 'flex', gap: '6px', justifyContent: 'flex-end', marginBottom: '6px' })
+    const mkBtn = (t, fn) => {
+      const b = document.createElement('button')
+      b.textContent = t
+      Object.assign(b.style, {
+        padding: '2px 10px', border: '1px solid #3a4258', borderRadius: '6px',
+        background: '#2a3142', color: '#e8eaf0', cursor: 'pointer', fontSize: '12px'
+      })
+      b.onclick = fn
+      return b
+    }
+    bar.appendChild(mkBtn('Hentikan', () => { batal = true }))
+    bar.appendChild(mkBtn('Tutup', () => box.remove()))
+    isi = document.createElement('div')
+    isi.style.whiteSpace = 'pre-wrap'
+    isi.style.overflow = 'auto'
+    box.appendChild(bar)
+    box.appendChild(isi)
+    document.body.appendChild(box)
+  }
+
+  const log = (...a) => {
+    console.log('[AutoStep]', ...a)
+    if (!isi) return
+    const d = document.createElement('div')
+    d.textContent = a.join(' ')
+    isi.appendChild(d)
+    isi.scrollTop = isi.scrollHeight
+  }
+
+  const sleep = async (ms) => {
+    if (batal) throw new Error('Dihentikan pengguna')
+    await new Promise((r) => setTimeout(r, ms))
+    selaraskan()
+    if (batal) throw new Error('Dihentikan pengguna')
+  }
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
+  const low = (s) => norm(s).toLowerCase()
+  const visible = (e) => !!e && !!e.offsetParent
+  const after = (a, b) => !!(a && b && a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  const before = (a, b) => !!(a && b && a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING)
+  const henti = (m) => { throw new Error(m) }
+
+  const deskripsi = (e) => {
+    if (!e || e === document.body) return '(body, tidak ada elemen yang fokus)'
+    const at = (n) => e.getAttribute && e.getAttribute(n)
+    const nm = at('formcontrolname') || at('name') || at('placeholder') || ''
+    const tx = e.tagName === 'BUTTON' || e.tagName === 'A' ? ' "' + norm(e.textContent).slice(0, 20) + '"' : ''
+    return e.tagName.toLowerCase() + (e.type ? '[' + e.type + ']' : '') + (e.id ? '#' + e.id : '') + (nm ? ' (' + nm + ')' : '') + tx
+  }
+  // Sorot elemen yang baru difokus supaya terlihat di layar
+  const sorot = (el) => {
+    if (!SOROT_FOKUS || !el || !el.style) return
+    const tampak = (x) => { const r = x.getBoundingClientRect(); return r.width > 4 && r.height > 4 && getComputedStyle(x).opacity !== '0' }
+    const t = tampak(el) ? el : (el.closest('.p-dropdown, .p-checkbox, .p-radiobutton, .p-calendar, .p-inputswitch') || el.parentElement || el)
+    const lama = t.style.outline
+    const lamaOff = t.style.outlineOffset
+    t.style.outline = '3px solid #f59e0b'
+    t.style.outlineOffset = '2px'
+    try { t.scrollIntoView({ block: 'nearest' }) } catch (err) {}
+    setTimeout(() => { t.style.outline = lama; t.style.outlineOffset = lamaOff }, 1500)
+  }
+
+  const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
+  const tok = (s, d = 0) => String(s).replace(/\{([A-Za-z_]\w*)([+-]\d+)?\}/g, (m, k, o) => {
+    if (!o && d < 3 && Object.prototype.hasOwnProperty.call(DATA, k)) return tok(DATA[k], d + 1)
+    if (k === 'hari_ini' || k === 'tgl' || k === 'bulan' || k === 'tahun') {
+      const dt = new Date()
+      dt.setDate(dt.getDate() + (o ? parseInt(o, 10) : 0))
+      if (k === 'tgl') return dt.getDate()
+      if (k === 'bulan') return BLN[dt.getMonth()]
+      if (k === 'tahun') return dt.getFullYear()
+      return dt.getDate() + ' ' + BLN[dt.getMonth()] + ' ' + dt.getFullYear()
+    }
+    return m
+  })
+
+  async function tunggu(kondisi, maxMs = 8000) {
+    selaraskan()
+    const t0 = Date.now()
+    while (Date.now() - t0 < maxMs) {
+      if (kondisi()) return true
+      await sleep(150)
+    }
+    return !!kondisi()
+  }
+
+  // Dialog/modal (PrimeNG baru & lama, Bootstrap, Angular Material). Dialog bergaya position:fixed punya offsetParent null,
+  // jadi keterlihatannya diperiksa lewat getClientRects, bukan visible().
+  const DIALOG_SEL = '.p-dialog, .ui-dialog, .modal.show, .modal.in, .mat-dialog-container'
+  const dialogTampak = () => {
+    const ada = [...document.querySelectorAll(DIALOG_SEL)].filter((d) => !(box && box.contains(d)) && (visible(d) || d.getClientRects().length > 0))
+    return ada.filter((d) => !ada.some((o) => o !== d && o.contains(d)))
+  }
+  const dialogAtas = () => dialogTampak().slice(-1)[0]
+  // lingkup pencarian: 'semua' | 'dialog' (dialog paling atas, jika ada) | 'luar' (di luar dialog)
+  const dalam = (e, l) => {
+    if (l === 'dialog') { const d = dialogAtas(); return d ? d.contains(e) : true }
+    if (l === 'luar') return !e.closest(DIALOG_SEL)
+    return true
+  }
+
+  const cariElemenTeks = (teks, exact = true, l = 'semua') =>
+    [...document.querySelectorAll('*')].find((e) => {
+      if (e.children.length !== 0 || !visible(e) || (box && box.contains(e)) || !dalam(e, l)) return false
+      const bersih = low(e.textContent).replace(/\s*:\s*$/, '')
+      const target = low(teks)
+      return exact ? bersih === target : bersih.includes(target)
+    })
+
+  const tampilDropdown = (dd) => norm(dd?.querySelector('.p-dropdown-label')?.textContent)
+  const panelTampak = () => [...document.querySelectorAll('.p-dropdown-panel')].filter((p) => visible(p) || p.getClientRects().length > 0)
+  const itemsPanel = () => {
+    selaraskan()
+    const ps = panelTampak()
+    return (ps.length ? ps : [...document.querySelectorAll('.p-dropdown-panel')]).flatMap((p) => [...p.querySelectorAll('.p-dropdown-item')])
+  }
+
+  const kunci = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  let caraDD = ''
+  const infoDD = (d) => {
+    const h = d.closest('p-dropdown') || d.parentElement
+    const fc = (h && h.getAttribute && (h.getAttribute('formcontrolname') || h.getAttribute('name'))) || ''
+    return (fc ? fc + ': ' : '') + '"' + tampilDropdown(d) + '"'
+  }
+  const daftarDropdown = () => [...document.querySelectorAll('.p-dropdown')].filter((d) => visible(d)).map(infoDD).join(' | ') || '(tidak ada dropdown terlihat)'
+
+  // Mencari dropdown dengan beberapa cara: label form, formcontrolname/atribut, teks placeholder, teks tampilan
+  const dropdownByLabel = (teks, l = 'semua') => {
+    selaraskan()
+    const q = kunci(teks)
+    const semua = [...document.querySelectorAll('.p-dropdown')].filter((d) => visible(d) && dalam(d, l))
+    const setelah = (lb) => (lb ? semua.find((d) => after(lb, d)) : null)
+    const attrs = (d) => {
+      const out = []
+      ;[d, d.closest('p-dropdown'), d.parentElement].forEach((e) => {
+        if (!e || !e.getAttribute) return
+        ;['formcontrolname', 'name', 'id', 'inputid', 'placeholder', 'aria-label', 'ng-reflect-name'].forEach((a) => {
+          const v = e.getAttribute(a)
+          if (v) out.push(kunci(v))
+        })
+      })
+      const inp = d.querySelector('input')
+      if (inp) ['id', 'name', 'aria-label'].forEach((a) => { const v = inp.getAttribute(a); if (v) out.push(kunci(v)) })
+      return out
+    }
+    const strip = (x) => kunci(x).replace(/^(pilih|select|choose)/, '')
+    const tahap = [
+      ['formcontrolname/atribut', () => semua.find((d) => attrs(d).includes(q))],
+      ['teks placeholder', () => semua.find((d) => strip(tampilDropdown(d)) === q)],
+      ['label form', () => setelah(cariElemenTeks(teks, true, l))],
+      ['atribut (mengandung)', () => q.length >= 4 && semua.find((d) => attrs(d).some((a) => a.includes(q)))],
+      ['teks tampilan (mengandung)', () => q.length >= 3 && semua.find((d) => kunci(tampilDropdown(d)).includes(q))],
+      ['label form (mengandung)', () => setelah(cariElemenTeks(teks, false, l))]
+    ]
+    for (const [nama, fn] of tahap) {
+      const d = fn()
+      if (d) { caraDD = nama; return d }
+    }
+    return null
+  }
+
+  // Mencari kolom isian: placeholder / formcontrolname / name / id / aria-label, atau label di dekatnya
+  let caraInput = ''
+  const inputTampak = (l = 'semua') => [...document.querySelectorAll('input, textarea')]
+    .filter((i) => visible(i) && !['radio', 'checkbox', 'hidden', 'button', 'submit', 'file'].includes(i.type) && !(box && box.contains(i)) && dalam(i, l))
+  const inputByLabel = (teks, l = 'semua') => {
+    const q = kunci(teks)
+    const semuaInput = inputTampak(l)
+    const attrs = (i) => {
+      const out = []
+      ;[i, i.closest('[formcontrolname]'), i.closest('[ng-reflect-name]')].forEach((e) => {
+        if (!e || !e.getAttribute) return
+        ;['placeholder', 'formcontrolname', 'name', 'id', 'aria-label', 'ng-reflect-name', 'title'].forEach((a) => {
+          const v = e.getAttribute(a)
+          if (v) out.push(kunci(v))
+        })
+      })
+      return out
+    }
+    const setelah = (lb) => (lb ? semuaInput.find((i) => after(lb, i)) : null)
+    const tahap = [
+      ['placeholder/atribut', () => q && semuaInput.find((i) => attrs(i).includes(q))],
+      ['label form', () => setelah(cariElemenTeks(teks, true, l))],
+      ['placeholder/atribut (mengandung)', () => q.length >= 3 && semuaInput.find((i) => attrs(i).some((a) => a.includes(q)))],
+      ['label form (mengandung)', () => setelah(cariElemenTeks(teks, false, l))]
+    ]
+    for (const [nama, fn] of tahap) {
+      const i = fn()
+      if (i) { caraInput = nama; return i }
+    }
+    return null
+  }
+  const daftarInput = (l = 'semua') => inputTampak(l).slice(0, 12).map(deskripsi).join(' | ') || '(tidak ada kolom isian terlihat)'
+
+  // Membuka dropdown: klik biasa, lalu ikon panah, lalu label; berhenti begitu panel terlihat
+  async function bukaDropdown(dd) {
+    const cara = [
+      () => dd.click(),
+      () => aksiElemen(dd.querySelector('.p-dropdown-trigger, .ui-dropdown-trigger') || dd, 'klik'),
+      () => aksiElemen(dd.querySelector('.p-dropdown-label') || dd, 'klik')
+    ]
+    for (let i = 0; i < cara.length; i++) {
+      if (panelTampak().length) return true
+      await cara[i]()
+      if (await tunggu(() => panelTampak().length > 0, 1500)) return true
+    }
+    return panelTampak().length > 0
+  }
+
+  function isiTeks(el, v) {
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    el.dispatchEvent(new Event('blur', { bubbles: true }))
+  }
+
+  async function ketikTanggal(el, v, jedaMs = 300) {
+    const setter = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set
+    el.focus()
+    el.click()
+    await sleep(200)
+    el.select()
+    setter.call(el, v)
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: v }))
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Process' }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    await sleep(300)
+    // Tab: kalender menutup saat menerima Tab, fokus pindah ke kolom berikutnya
+    const tab = { key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true }
+    el.dispatchEvent(new KeyboardEvent('keydown', tab))
+    el.dispatchEvent(new KeyboardEvent('keyup', tab))
+    const berikut = [...document.querySelectorAll('input:not([type="hidden"]):not([disabled]), select, textarea, button:not([disabled])')]
+      .filter((x) => visible(x) && !(box && box.contains(x)))
+      .find((x) => after(el, x))
+    if (berikut) berikut.focus()
+    else el.blur()
+    await sleep(400)
+    if (jedaMs > 0) await sleep(jedaMs)
+    if (document.querySelector('.p-datepicker')) {
+      document.body.click()
+      await sleep(300)
+    }
+  }
+
+  // Kolom bermasker angka: sisipkan teks seperti pengetikan, cadangan lewat setter. Mengembalikan true jika cocok.
+  async function ketikAngka(el, digits) {
+    const hanyaAngka = (s) => String(s || '').replace(/\D/g, '')
+    const cocok = () => hanyaAngka(el.value) === digits || hanyaAngka(el.value) === digits + '00'
+    el.focus()
+    el.click()
+    await sleep(200)
+    el.select()
+    document.execCommand('insertText', false, digits)
+    await sleep(400)
+    if (!cocok()) {
+      el.focus()
+      el.select()
+      Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, digits)
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: digits }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+      await sleep(400)
+    }
+    el.dispatchEvent(new Event('blur', { bubbles: true }))
+    el.blur()
+    await sleep(400)
+    return cocok()
+  }
+
+  function daftarFokus() {
+    return [...document.querySelectorAll('input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter((e) => visible(e) && (!box || !box.contains(e)))
+  }
+
+  // Meniru perilaku bawaan browser (event sintetis tidak memicunya otomatis)
+  function emulasiDefault(el, k) {
+    const tag = el.tagName
+    const tipe = (el.type || '').toLowerCase()
+    const role = el.getAttribute && el.getAttribute('role')
+    const tombolInput = tag === 'INPUT' && ['button', 'submit', 'reset', 'image'].includes(tipe)
+    const cek = (tag === 'INPUT' && ['checkbox', 'radio'].includes(tipe)) || role === 'checkbox' || role === 'radio'
+    if (k === 'Enter') {
+      if (tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY' || role === 'button' || tombolInput) el.click()
+    } else if (k === 'Space') {
+      if (tag === 'BUTTON' || role === 'button' || tombolInput || cek) el.click()
+    } else if (/^Arrow(Down|Up|Left|Right)$/.test(k)) {
+      const maju = k === 'ArrowDown' || k === 'ArrowRight'
+      if (tag === 'SELECT') {
+        const ni = Math.max(0, Math.min(el.options.length - 1, el.selectedIndex + (maju ? 1 : -1)))
+        if (ni !== el.selectedIndex) {
+          el.selectedIndex = ni
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+          el.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+      } else if (tag === 'INPUT' && tipe === 'radio' && el.name) {
+        const grup = [...document.querySelectorAll('input[type="radio"]')].filter((r) => r.name === el.name && !r.disabled)
+        const t = grup[grup.indexOf(el) + (maju ? 1 : -1)]
+        if (t) { t.focus(); t.click() }
+      }
+    }
+  }
+
+  async function kirimTombolKey(namaKey, targetEl = null) {
+    const el = targetEl || document.activeElement || document.body
+    if (targetEl && document.activeElement !== targetEl && /^(INPUT|SELECT|TEXTAREA|BUTTON|A)$/.test(targetEl.tagName)) targetEl.focus()
+    const map = {
+      Tab: { key: 'Tab', code: 'Tab', keyCode: 9, which: 9 },
+      Enter: { key: 'Enter', code: 'Enter', keyCode: 13, which: 13 },
+      Space: { key: ' ', code: 'Space', keyCode: 32, which: 32 },
+      ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40 },
+      ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38, which: 38 },
+      ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37, which: 37 },
+      ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39 },
+      Escape: { key: 'Escape', code: 'Escape', keyCode: 27, which: 27 }
+    }
+
+    if (namaKey === 'Tab' || namaKey === 'Shift+Tab') {
+      const mundur = namaKey === 'Shift+Tab'
+      const init = { ...map.Tab, shiftKey: mundur, bubbles: true, cancelable: true }
+      el.dispatchEvent(new KeyboardEvent('keydown', init))
+      const list = daftarFokus()
+      const idx = list.indexOf(document.activeElement)
+      const anc = jangkar || (idx < 0 && el !== document.body ? el : null)
+      let next
+      if (idx < 0 && anc) {
+        const maju = list.filter((x) => after(anc, x))
+        const mdr = list.filter((x) => !after(anc, x) && x !== anc && !anc.contains(x))
+        next = mundur ? mdr[mdr.length - 1] : maju[0]
+        jangkar = next || anc
+      } else {
+        next = mundur ? (idx > 0 ? list[idx - 1] : list[list.length - 1]) : (idx >= 0 && idx < list.length - 1 ? list[idx + 1] : list[0])
+      }
+      if (next) { next.focus(); sorot(next) }
+      ;(next || el).dispatchEvent(new KeyboardEvent('keyup', init))
+      return
+    }
+
+    const spec = map[namaKey] || { key: namaKey, code: namaKey, keyCode: 0, which: 0 }
+    const init = { ...spec, bubbles: true, cancelable: true }
+    const lanjut = el.dispatchEvent(new KeyboardEvent('keydown', init))
+    if (namaKey === 'Enter' || namaKey === 'Space') {
+      el.dispatchEvent(new KeyboardEvent('keypress', init))
+    }
+    el.dispatchEvent(new KeyboardEvent('keyup', init))
+    if (lanjut) emulasiDefault(el, namaKey)
+  }
+
+  async function aksiElemen(el, aksi) {
+    el.scrollIntoView({ block: 'center' })
+    const base = { bubbles: true, cancelable: true, view: window }
+    const m = (t, o = {}) => el.dispatchEvent(new MouseEvent(t, { ...base, ...o }))
+    if (aksi === 'hover') { m('mouseover'); m('mouseenter'); m('mousemove'); return }
+    if (aksi === 'kanan') { m('mousedown', { button: 2 }); m('mouseup', { button: 2 }); m('contextmenu', { button: 2 }); return }
+    const n = aksi === 'dobel' ? 2 : 1
+    if (/^(INPUT|SELECT|TEXTAREA|BUTTON|A)$/.test(el.tagName) || el.hasAttribute('tabindex')) el.focus({ preventScroll: true })
+    for (let i = 1; i <= n; i++) {
+      m('mousedown', { detail: i }); m('mouseup', { detail: i }); m('click', { detail: i })
+      if (i < n) await sleep(60)
+    }
+    if (aksi === 'dobel') m('dblclick', { detail: 2 })
+  }
+
+  async function jalankanKeys(urut, jeda, el) {
+    jangkar = el || null
+    for (const item of urut || []) {
+      for (let i = 0; i < item.count; i++) {
+        const a = document.activeElement
+        await kirimTombolKey(item.key, a && a !== document.body ? null : el)
+        if (/Tab/.test(item.key)) log('   ' + item.key + ' -> ' + deskripsi(document.activeElement))
+        if (jeda > 0) await sleep(jeda)
+      }
+    }
+    jangkar = null
+  }
+
+  // Kotak filter dropdown: hanya event input (tanpa blur, supaya panel tidak menutup)
+  // Mengetik seperti pengguna: sisipkan teks lewat execCommand; jika gagal, ketik per karakter lengkap dengan event keyboard
+  async function ketikFilter(el, v) {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    el.focus()
+    if (typeof el.select === 'function') el.select()
+    let ok = false
+    try { ok = !!document.execCommand('insertText', false, v) } catch (err) {}
+    await sleep(150)
+    if (!ok || el.value !== v) {
+      el.focus()
+      set.call(el, '')
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      for (const ch of v) {
+        const kc = ch.toUpperCase().charCodeAt(0)
+        const kd = /\d/.test(ch) ? 'Digit' + ch : /[a-z]/i.test(ch) ? 'Key' + ch.toUpperCase() : ch
+        const init = { key: ch, code: kd, keyCode: kc, which: kc, bubbles: true, cancelable: true }
+        el.dispatchEvent(new KeyboardEvent('keydown', init))
+        set.call(el, el.value + ch)
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }))
+        el.dispatchEvent(new KeyboardEvent('keyup', init))
+        await sleep(60)
+      }
+    }
+    // PrimeNG lama menyaring daftar lewat event keyup
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: v.slice(-1) }))
+  }
+
+  // tester(teks) -> 2 cocok persis, 1 cocok sebagian, 0 tidak cocok
+  async function pilihDropdown(dd, tester, maxMs = 10000) {
+    const t0 = Date.now()
+    while (dd.classList.contains('p-disabled')) {
+      if (Date.now() - t0 > maxMs) return 'dropdown tetap nonaktif'
+      await sleep(200)
+    }
+    if (!(await bukaDropdown(dd))) return 'panel dropdown tidak terbuka setelah diklik (area, ikon panah, dan label sudah dicoba)'
+    while (Date.now() - t0 < maxMs) {
+      const items = itemsPanel()
+      if (items.length) {
+        const skor = items.map((i) => tester(norm(i.textContent)))
+        const maks = Math.max(...skor)
+        const hits = maks > 0 ? items.filter((_, n) => skor[n] === maks) : []
+        if (hits.length === 1) {
+          hits[0].click()
+          await sleep(500)
+          return null
+        }
+        document.body.click()
+        return hits.length
+          ? 'pilihan ambigu: ' + hits.map((h) => norm(h.textContent)).join(' | ')
+          : 'pilihan tidak ditemukan. Tersedia: ' + items.map((i) => norm(i.textContent)).join(' | ')
+      }
+      await sleep(200)
+    }
+    document.body.click()
+    return 'pilihan tidak muncul'
+  }
+  const testerBiasa = (want) => (t) => (low(t) === low(want) ? 2 : low(t).startsWith(low(want)) ? 1 : 0)
+  const testerKode = (kode) => (t) => (norm(t.split(' - ')[0]).toUpperCase().endsWith('.' + kode.toUpperCase()) ? 2 : 0)
+
+  // Dropdown dengan kotak filter: ketik, tunggu daftar stabil, lalu pilih yang paling cocok
+  async function pilihDropdownCari(dd, kode, ambilPertama = false, maxMs = 20000) {
+    const t0 = Date.now()
+    while (dd.classList.contains('p-disabled')) {
+      if (Date.now() - t0 > maxMs) return 'dropdown tetap nonaktif'
+      await sleep(200)
+    }
+    if (!(await bukaDropdown(dd))) return 'panel pilihan tidak terbuka setelah diklik (area, ikon panah, dan label sudah dicoba)'
+    const panel = panelTampak().slice(-1)[0] || document.querySelector('.p-dropdown-panel')
+    const filter = panel.querySelector('.p-dropdown-filter') || [...panel.querySelectorAll('input')].find((x) => !['hidden', 'checkbox', 'radio'].includes(x.type))
+    if (!filter) log('   Kotak pencarian tidak ditemukan di panel dropdown, memilih dari daftar apa adanya')
+    if (filter) {
+      await ketikFilter(filter, kode)
+      log('   Kotak filter ' + deskripsi(filter) + ' berisi "' + filter.value + '"')
+      let last = -1
+      let stabilSejak = Date.now()
+      while (Date.now() - t0 < maxMs) {
+        const n = itemsPanel().length
+        if (n !== last) { last = n; stabilSejak = Date.now() }
+        if (n > 0 && Date.now() - stabilSejak > 1000) break
+        await sleep(200)
+      }
+    } else {
+      await sleep(1000)
+    }
+    const items = itemsPanel()
+    if (!items.length) {
+      document.body.click()
+      return 'tidak ada pilihan untuk "' + kode + '"'
+    }
+    const skor = items.map((i) => {
+      const t = norm(i.textContent)
+      const k = low(t).split(/\s*-\s*|\s+/)[0]
+      if (k === low(kode)) return 3
+      if (low(t).startsWith(low(kode))) return 2
+      if (low(t).includes(low(kode))) return 1
+      return 0
+    })
+    const maks = Math.max(...skor)
+    const hits = maks > 0 ? items.filter((_, n) => skor[n] === maks) : []
+    if (hits.length === 1 || (ambilPertama && items.length)) {
+      ;(hits[0] || items[0]).click()
+      await sleep(800)
+      return null
+    }
+    document.body.click()
+    return hits.length
+      ? 'pilihan ambigu: ' + hits.slice(0, 8).map((h) => norm(h.textContent)).join(' | ')
+      : 'pilihan tidak cocok. Tersedia: ' + items.slice(0, 8).map((i) => norm(i.textContent)).join(' | ')
+  }
+
+  try {
+__STEPS_BODY__
+    log('Semua langkah selesai.')
+  } catch (e) {
+    log('BERHENTI: ' + e.message)
+  }
+})()</script>
+
+  <script>
+    const STORAGE_KEY = 'auto_step_generator_v1';
+    const PROFILE_KEY = 'auto_step_generator_profiles_v1';
+    const NUM_KEYS = ['tungguMs', 'jedaMs', 'jedaKlikMs', 'jedaKeyMs', 'jumlahTekan', 'durasiMs', 'barisKe'];
+    const defGlobal = () => ({ tampilkanLog: true, lanjutJikaError: false, jedaDefaultMs: 150, ringkas: false, sorotFokus: true, variabel: [] });
+
+    const STEP_TYPES = [
+      { type: 'click_button', label: 'Klik Tombol' },
+      { type: 'click_text', label: 'Klik / Dobel Klik Teks' },
+      { type: 'click_selector', label: 'Klik Elemen (CSS)' },
+      { type: 'table_row', label: 'Pilih Baris Tabel' },
+      { type: 'fill_input', label: 'Isi Teks / Tanggal' },
+      { type: 'checkbox', label: 'Centang Checkbox' },
+      { type: 'radio_option', label: 'Pilih Radio (by teks)' },
+      { type: 'dropdown_key', label: 'Dropdown + Keyboard' },
+      { type: 'dropdown_select', label: 'Pilih Opsi Dropdown' },
+      { type: 'find_text_keys', label: 'Cari Teks + Tab/Enter' },
+      { type: 'press_keys', label: 'Tekan Tombol Keyboard' },
+      { type: 'wait', label: 'Jeda / Tunggu' },
+      { type: 'custom_js', label: 'JS Kustom' }
+    ];
+
+    const KEY_OPTS = [
+      ['Tab', 'Tab'], ['Shift+Tab', 'Shift + Tab (Mundur)'], ['Enter', 'Enter'], ['Space', 'Space (Spasi)'],
+      ['ArrowDown', 'ArrowDown'], ['ArrowUp', 'ArrowUp'], ['ArrowLeft', 'ArrowLeft'], ['ArrowRight', 'ArrowRight'], ['Escape', 'Escape']
+    ];
+
+    // Skema field per tipe langkah (UI dirender otomatis dari sini)
+    const FIELDS = {
+      click_button: [
+        { k: 'teksTombol', l: 'Teks Tombol', t: 'text' },
+        { k: 'modeCocok', l: 'Mode Pencocokan', t: 'select', o: [['exact', 'Persis sama'], ['includes', 'Mengandung teks']] },
+        { k: 'tungguMs', l: 'Tunggu Tombol Muncul (ms)', t: 'num', step: 500 },
+        { k: 'jedaMs', l: 'Jeda Setelah Klik (ms)', t: 'num', step: 100 },
+        { k: 'lewatiJikaNonaktif', l: 'Lewati jika tombol nonaktif', t: 'check' },
+        { k: 'konfirmasi', l: 'Tanya konfirmasi sebelum klik', t: 'check' }
+      ],
+      click_text: [
+        { k: 'cariTeks', l: 'Teks Elemen (span, div, dll)', t: 'text', p: 'Interkoneksi Non Bast' },
+        { k: 'aksi', l: 'Aksi Mouse', t: 'select', o: [['klik', 'Klik'], ['dobel', 'Dobel Klik'], ['kanan', 'Klik Kanan'], ['hover', 'Hover']] },
+        { k: 'modeCocok', l: 'Mode Pencocokan', t: 'select', o: [['exact', 'Persis sama'], ['includes', 'Mengandung teks']] },
+        { k: 'tungguMs', l: 'Tunggu Muncul (ms)', t: 'num', step: 500 },
+        { k: 'jedaMs', l: 'Jeda Setelah Aksi (ms)', t: 'num', step: 100 },
+        { k: 'jedaKeyMs', l: 'Jeda Antar Tombol (ms)', t: 'num' },
+        { k: 'opsional', l: 'Lewati jika elemen tidak ada', t: 'check' }
+      ],
+      click_selector: [
+        { k: 'selector', l: 'CSS Selector', t: 'text', p: 'button.btn-simpan, #id, [data-x="1"]' },
+        { k: 'tungguMs', l: 'Tunggu Muncul (ms)', t: 'num', step: 500 },
+        { k: 'jedaMs', l: 'Jeda Setelah Klik (ms)', t: 'num', step: 100 },
+        { k: 'opsional', l: 'Lewati jika elemen tidak ada', t: 'check' }
+      ],
+      table_row: [
+        { k: 'barisKe', l: 'Baris ke-', t: 'num', step: 1 },
+        { k: 'aksi', l: 'Aksi pada baris', t: 'select', o: [['klik', 'Klik baris'], ['dobel', 'Dobel klik baris'], ['centang', 'Centang kotak di baris']] },
+        { k: 'headerTabel', l: 'Tabel yang header-nya mengandung teks', t: 'text', p: 'contoh: Jenis Wajib Pajak (kosong = semua tabel)' },
+        { k: 'teksBaris', l: 'Hanya baris yang mengandung teks (opsional)', t: 'text', p: 'kosong = semua baris' },
+        { k: 'tungguMs', l: 'Tunggu Data Muncul (ms)', t: 'num', step: 500 },
+        { k: 'jedaMs', l: 'Jeda Setelah Aksi (ms)', t: 'num', step: 100 }
+      ],
+      fill_input: [
+        { k: 'labelKolom', l: 'Kolom (label / placeholder / formcontrolname)', t: 'text', p: 'Tanggal Perintah Bayar  atau  isi placeholder kolom' },
+        { k: 'nilai', l: 'Nilai Isian', t: 'text', p: '{hari_ini}  atau  21 Nov 2026' },
+        { k: 'namaVar', l: 'Nama variabel di atas output (kosong = otomatis)', t: 'text', p: 'mis. tgl' },
+        { k: 'tipeInput', l: 'Tipe Input', t: 'select', o: [['tanggal', 'Tanggal (ketik + Tab/Blur)'], ['teks', 'Teks / Textarea Biasa'], ['angka', 'Angka Bermasker']] },
+        { k: 'tungguMs', l: 'Tunggu Kolom Muncul (ms)', t: 'num', step: 500 },
+        { k: 'jedaMs', l: 'Jeda Setelah Isi (ms)', t: 'num' },
+        { k: 'jedaKeyMs', l: 'Jeda Antar Tombol (ms)', t: 'num' },
+        { k: 'validasiCocok', l: 'Hentikan jika hasil kolom tidak cocok', t: 'check' }
+      ],
+      checkbox: [
+        { k: 'labelKolom', l: 'Label Acuan', t: 'text', p: 'Setuju' },
+        { k: 'centang', l: 'Pastikan dalam keadaan tercentang', t: 'check' },
+        { k: 'jedaMs', l: 'Jeda Setelah (ms)', t: 'num' }
+      ],
+      dropdown_key: [
+        { k: 'labelDropdown', l: 'Dropdown (label form / formcontrolname / placeholder)', t: 'text', p: 'Sumber Dana  atau  sumberDana' },
+        { k: 'tombolKey', l: 'Tombol Keyboard Utama', t: 'select', o: KEY_OPTS.filter((o) => o[0] !== 'Tab' && o[0] !== 'Shift+Tab') },
+        { k: 'jumlahTekan', l: 'Jumlah Tekan Tombol', t: 'num', step: 1 },
+        { k: 'jedaKlikMs', l: 'Jeda Setelah Klik (ms)', t: 'num' },
+        { k: 'jedaKeyMs', l: 'Jeda Antar Tombol (ms)', t: 'num' },
+        { k: 'enterAkhir', l: 'Akhiri dengan Enter', t: 'check' }
+      ],
+      dropdown_select: [
+        { k: 'labelDropdown', l: 'Dropdown (label form / formcontrolname / placeholder)', t: 'text', p: 'Program  atau  program' },
+        { k: 'nilaiPilihan', l: 'Nilai / Kode Pilihan', t: 'text', p: 'RM / WA / 4715' },
+        { k: 'namaVar', l: 'Nama variabel di atas output (kosong = otomatis)', t: 'text', p: 'mis. sumberDana' },
+        { k: 'modeDropdown', l: 'Cara Pencarian', t: 'select', o: [['biasa', 'Daftar Biasa (teks persis/awal)'], ['kode', 'Akhiran Kode (.WA / .EBA)'], ['cari', 'Ketik di Kotak Filter Dropdown']] },
+        { k: 'ambilPertama', l: 'Jika hasil lebih dari satu, pilih yang paling atas', t: 'check', if: (c) => c.modeDropdown === 'cari' },
+        { k: 'jedaMs', l: 'Jeda Setelah Pilih (ms)', t: 'num' }
+      ],
+      find_text_keys: [
+        { k: 'cariTeks', l: 'Cari Teks di Halaman', t: 'text', p: 'contoh: NPWP' },
+        { k: 'targetFokus', l: 'Target Fokus Awal', t: 'select', o: [['input_after', 'Input/Tombol pertama setelah teks'], ['element_self', 'Elemen teks itu sendiri (klik/fokus)']] },
+        { k: 'jedaKeyMs', l: 'Jeda Antar Aksi Key (ms)', t: 'num' }
+      ],
+      press_keys: [
+        { k: 'cariTeks', l: 'Fokus Awal: Teks Label (opsional)', t: 'text', p: 'kosong = dari elemen yang sedang fokus' },
+        { k: 'jedaKeyMs', l: 'Jeda Antar Tombol (ms)', t: 'num' },
+        { k: 'jedaMs', l: 'Jeda Setelah Selesai (ms)', t: 'num' }
+      ],
+      radio_option: [
+        { k: 'labelGrup', l: 'Label Grup Radio', t: 'text', p: 'Jenis Perintah Bayar' },
+        { k: 'teksPilihan', l: 'Teks Pilihan', t: 'text', p: 'UP' },
+        { k: 'namaVar', l: 'Nama variabel di atas output (kosong = otomatis)', t: 'text', p: 'mis. jenis' },
+        { k: 'jedaMs', l: 'Jeda Setelah Pilih (ms)', t: 'num' }
+      ],
+      wait: [
+        { k: 'modeWait', l: 'Mode Tunggu', t: 'select', o: [['sleep', 'Jeda Waktu Tetap (ms)'], ['text_visible', 'Tunggu Teks Muncul'], ['text_hidden', 'Tunggu Teks Hilang'], ['dialog_open', 'Tunggu Dialog Terbuka'], ['dialog_closed', 'Tunggu Dialog Tertutup'], ['button_enabled', 'Tunggu Tombol Aktif']] },
+        { k: 'teksTunggu', l: 'Teks / Judul Dialog / Nama Tombol', t: 'text', p: 'Data Wajib Pajak', if: (c) => c.modeWait !== 'sleep' },
+        { k: 'durasiMs', l: 'Durasi / Timeout (ms)', t: 'num', step: 100 }
+      ]
+    };
+
+    const HINTS = {
+      fill_input: 'Kolom dicari lewat placeholder, formcontrolname/name/id, atau label di dekatnya (mis. "Nama Vendor"). Token:{hari_ini}, {hari_ini+1}, {hari_ini-7}, {tgl}, {bulan}, {tahun}, atau {namaVariabel} dari panel Variabel Data. Tipe Tanggal sudah menekan Tab otomatis, jadi urutan tombol berjalan dari kolom berikutnya.',
+      dropdown_key: 'Dropdown dicari lewat label form, formcontrolname (mis. sumberDana), atau teks placeholder (mis. Pilih Sumber Dana).',
+      dropdown_select: 'Dropdown dicari lewat label form, formcontrolname (mis. sumberDana), atau teks placeholder. Nilai pilihan juga mendukung token seperti {tahun}. Untuk dropdown yang punya kotak pencarian (mis. KRO): pilih cara "Ketik di Kotak Filter Dropdown", isi kodenya (mis. 994), lalu centang "pilih yang paling atas" supaya hasil pertama yang diklik.',
+      click_selector: 'Gunakan jika tombol/elemen tidak punya teks yang unik (ikon, link, dll).',
+      table_row: 'Isi "Tabel yang header-nya mengandung teks" dengan nama salah satu kolom tabel yang dituju (mis. Jenis Wajib Pajak) agar tidak salah tabel. Jika tabel ada di modal, set "Cari di" ke Dialog paling atas. Beri langkah Jeda / Tunggu ~1000 ms sebelum ini agar data lama tidak ikut terpilih.'
+    };
+
+    const TEMPLATES = {
+      click_button: { nama: 'Klik Tombol Rekam', cfg: { teksTombol: 'Rekam', modeCocok: 'exact', tungguMs: 3000, jedaMs: 1200, lewatiJikaNonaktif: true, konfirmasi: false } },
+      click_text: { nama: 'Dobel Klik Teks', cfg: { cariTeks: 'Interkoneksi Non Bast', aksi: 'dobel', modeCocok: 'exact', tungguMs: 3000, jedaMs: 500, opsional: false, jedaKeyMs: 150, urutanKey: [] } },
+      click_selector: { nama: 'Klik Elemen (CSS)', cfg: { selector: 'button.btn-simpan', tungguMs: 3000, jedaMs: 500, opsional: false } },
+      table_row: { nama: 'Pilih Baris Pertama', cfg: { barisKe: 1, aksi: 'klik', headerTabel: '', teksBaris: '', tungguMs: 8000, jedaMs: 500 } },
+      fill_input: { nama: 'Input Tanggal', cfg: { labelKolom: 'Tanggal Perintah Bayar', nilai: '{hari_ini}', namaVar: '', tipeInput: 'tanggal', tungguMs: 3000, jedaMs: 300, validasiCocok: true, jedaKeyMs: 150, urutanKey: [] } },
+      checkbox: { nama: 'Centang Opsi', cfg: { labelKolom: 'Setuju', centang: true, jedaMs: 200 } },
+      dropdown_key: { nama: 'Dropdown + Space', cfg: { labelDropdown: 'Sumber Dana', tombolKey: 'Space', jumlahTekan: 1, jedaKlikMs: 250, jedaKeyMs: 200, enterAkhir: false } },
+      dropdown_select: { nama: 'Pilih Dropdown', cfg: { labelDropdown: 'Program', nilaiPilihan: 'WA', namaVar: '', modeDropdown: 'kode', ambilPertama: false, jedaMs: 300 } },
+      find_text_keys: { nama: 'Cari NPWP -> Tab 2x -> Enter', cfg: { cariTeks: 'NPWP', targetFokus: 'input_after', jedaKeyMs: 150, urutanKey: [{ key: 'Tab', count: 2 }, { key: 'Enter', count: 1 }] } },
+      press_keys: { nama: 'Tab 3x', cfg: { cariTeks: '', jedaKeyMs: 150, jedaMs: 0, urutanKey: [{ key: 'Tab', count: 3 }] } },
+      radio_option: { nama: 'Pilih Jenis', cfg: { labelGrup: 'Jenis Perintah Bayar', teksPilihan: 'UP', namaVar: '', jedaMs: 500 } },
+      wait: { nama: 'Tunggu Proses', cfg: { modeWait: 'sleep', teksTunggu: '', durasiMs: 1000 } },
+      custom_js: { nama: 'Aksi Kustom JS', cfg: { kode: "log('Menjalankan blok kustom');" } }
+    };
+
+    // Semua langkah yang mencari elemen mendapat opsi "Cari di" (seluruh halaman / dialog paling atas / luar dialog)
+    const F_LINGKUP = { k: 'lingkup', l: 'Cari di', t: 'select', o: [['semua', 'Seluruh halaman'], ['dialog', 'Dialog paling atas'], ['luar', 'Di luar dialog']] };
+    ['click_button', 'click_text', 'click_selector', 'table_row', 'fill_input', 'checkbox', 'radio_option', 'dropdown_key', 'dropdown_select', 'find_text_keys', 'wait', 'press_keys'].forEach((t) => {
+      FIELDS[t].splice(1, 0, t === 'wait' ? Object.assign({}, F_LINGKUP, { if: (c) => c.modeWait !== 'sleep' }) : t === 'press_keys' ? Object.assign({}, F_LINGKUP, { if: (c) => !!c.cariTeks }) : F_LINGKUP);
+      TEMPLATES[t].cfg.lingkup = 'semua';
+    });
+
+    const clone = (o) => JSON.parse(JSON.stringify(o));
+
+    function makeStep(type, customNama = null, customCfg = null) {
+      const base = TEMPLATES[type] || TEMPLATES.click_button;
+      return {
+        id: 'st_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        type: TEMPLATES[type] ? type : 'click_button',
+        aktif: true,
+        collapsed: false,
+        nama: customNama || base.nama,
+        cfg: customCfg ? clone(customCfg) : clone(base.cfg)
+      };
+    }
+
+    // Lengkapi langkah lama/hasil import dengan field default terbaru
+    function normalizeStep(s) {
+      const base = makeStep(s && s.type);
+      return Object.assign(base, s, { cfg: Object.assign(base.cfg, (s && s.cfg) || {}), collapsed: !!(s && s.collapsed) });
+    }
+
+    function defaultSteps() {
+      return [
+        makeStep('click_button', 'Klik Tombol Rekam'),
+        makeStep('fill_input', 'Input Tanggal'),
+        makeStep('dropdown_key', 'Dropdown Sumber Dana + Space'),
+        makeStep('find_text_keys', 'Cari NPWP -> Tab 2x -> Enter')
+      ];
+    }
+
+    // ===== Generator kode per langkah =====
+    function genStep(st, n) {
+      const V = 'STEP_' + n;
+      const c = st.cfg;
+      const cfg = { nama: st.nama };
+      Object.keys(c).forEach((k) => {
+        if (k === 'namaVar') return;
+        if (k === 'urutanKey') cfg[k] = (c[k] || []).map((u) => ({ key: u.key, count: Number(u.count) || 1 }));
+        else if (NUM_KEYS.indexOf(k) >= 0) cfg[k] = Number(c[k]) || 0;
+        else cfg[k] = typeof c[k] === 'boolean' ? c[k] : String(c[k] == null ? '' : c[k]);
+      });
+      if (cfg.jumlahTekan !== undefined) cfg.jumlahTekan = Math.max(1, cfg.jumlahTekan);
+      if (cfg.durasiMs !== undefined && !cfg.durasiMs) cfg.durasiMs = 500;
+      if (cfg.barisKe !== undefined) cfg.barisKe = Math.max(1, cfg.barisKe);
+      const param = st.type === 'custom_js' ? '' : '  const ' + V + ' = ' + JSON.stringify(cfg);
+      const T = (t) => t.replace(/^\n/, '').replace(/\n$/, '').replace(/@V/g, V).replace(/@N/g, String(n));
+      let body;
+
+      switch (st.type) {
+        case 'click_button':
+          body = T(`
+const teks = tok(@V.teksTombol)
+const cari = () => [...document.querySelectorAll('button')].find((b) => {
+  if (!visible(b) || (box && box.contains(b)) || !dalam(b, @V.lingkup)) return false
+  const t = low(b.textContent), w = low(teks)
+  return @V.modeCocok === 'exact' ? t === w : t.includes(w)
+})
+await tunggu(() => !!cari(), @V.tungguMs)
+const btn = cari()
+if (!btn) henti('Langkah @N: tombol "' + teks + '" tidak ditemukan')
+if (btn.disabled && !@V.lewatiJikaNonaktif) await tunggu(() => !btn.disabled, @V.tungguMs)
+if (btn.disabled) {
+  if (@V.lewatiJikaNonaktif) log('@N. ' + @V.nama + ' (nonaktif, dilewati)')
+  else henti('Langkah @N: tombol "' + teks + '" tetap nonaktif')
+} else {
+  if (@V.konfirmasi && !confirm('Jalankan: ' + @V.nama + '?')) henti('Langkah @N dibatalkan pengguna')
+  btn.focus()
+  btn.click()
+  if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+  log('@N. ' + @V.nama + ' -> diklik')
+}`);
+          break;
+        case 'click_selector':
+          body = T(`
+const cari = () => [...document.querySelectorAll(@V.selector)].find((e) => visible(e) && !(box && box.contains(e)) && dalam(e, @V.lingkup))
+await tunggu(() => !!cari(), @V.tungguMs)
+const el = cari()
+if (!el) {
+  if (@V.opsional) log('@N. ' + @V.nama + ' (tidak ada, dilewati)')
+  else henti('Langkah @N: elemen "' + @V.selector + '" tidak ditemukan')
+} else {
+  if (typeof el.focus === 'function') el.focus({ preventScroll: true })
+  el.click()
+  if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+  log('@N. ' + @V.nama + ' -> diklik')
+}`);
+          break;
+        case 'table_row':
+          body = T(`
+const wadah = () => {
+  if (!@V.headerTabel) return [@V.lingkup === 'dialog' ? dialogAtas() : document].filter(Boolean)
+  const hd = low(tok(@V.headerTabel))
+  return [...document.querySelectorAll('th, .p-datatable-thead td')]
+    .filter((h) => visible(h) && !(box && box.contains(h)) && dalam(h, @V.lingkup) && low(h.textContent).includes(hd))
+    .map((h) => h.closest('.p-datatable, .ui-datatable, .ui-table') || h.closest('table'))
+    .filter((w, i, a) => w && a.indexOf(w) === i)
+}
+const semua = () => wadah().flatMap((w) => [...w.querySelectorAll('tbody tr')]).filter((r) =>
+  visible(r) && !(box && box.contains(r)) && dalam(r, @V.lingkup) &&
+  !r.matches('.p-datatable-emptymessage, .ui-datatable-emptymessage-row, .ui-datatable-emptymessage, .ui-table-emptymessage') &&
+  (!@V.teksBaris || low(r.textContent).includes(low(tok(@V.teksBaris)))))
+const no = Math.max(1, @V.barisKe)
+if (@V.lingkup === 'dialog' && !(await tunggu(() => !!dialogAtas(), @V.tungguMs))) henti('Langkah @N: modal/dialog tidak terdeteksi, jadi tidak ada tabel yang dipilih. Ganti "Cari di" ke Seluruh halaman dan isi "Tabel yang header-nya mengandung teks".')
+await tunggu(() => semua().length >= no, @V.tungguMs)
+const baris = semua()[no - 1]
+if (!baris) henti('Langkah @N: baris ke-' + no + (@V.headerTabel ? ' pada tabel "' + tok(@V.headerTabel) + '"' : '') + ' tidak ditemukan (tabel/data belum muncul atau kosong)')
+if (@V.aksi === 'centang') {
+  const kotak = baris.querySelector('.p-checkbox-box, .p-radiobutton-box, input[type="checkbox"], input[type="radio"]')
+  ;(kotak || baris).click()
+} else {
+  await aksiElemen(baris, @V.aksi)
+}
+if (!baris.hasAttribute('tabindex')) baris.setAttribute('tabindex', '-1')
+baris.focus({ preventScroll: true })
+sorot(baris)
+if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+log('@N. ' + @V.nama + ' -> baris ' + no + ': ' + norm(baris.textContent).slice(0, 40))`);
+          break;
+        case 'click_text':
+          body = T(`
+const teks = tok(@V.cariTeks)
+const cari = () => cariElemenTeks(teks, @V.modeCocok === 'exact', @V.lingkup)
+await tunggu(() => !!cari(), @V.tungguMs)
+const el = cari()
+if (!el) {
+  if (@V.opsional) log('@N. ' + @V.nama + ' (tidak ada, dilewati)')
+  else henti('Langkah @N: teks "' + teks + '" tidak ditemukan')
+} else {
+  await aksiElemen(el, @V.aksi)
+  if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+  await jalankanKeys(@V.urutanKey, @V.jedaKeyMs, el)
+  log('@N. ' + @V.nama + ' -> ' + @V.aksi)
+}`);
+          break;
+        case 'fill_input':
+          body = T(`
+const cari = () => inputByLabel(@V.labelKolom, @V.lingkup)
+await tunggu(() => !!cari(), @V.tungguMs)
+const inp = cari()
+if (!inp) henti('Langkah @N: kolom "' + @V.labelKolom + '" tidak ditemukan. Kolom terlihat: ' + daftarInput(@V.lingkup))
+log('   Kolom ditemukan lewat ' + caraInput + ': ' + deskripsi(inp))
+const nilai = tok(@V.nilai)
+const sama = @V.tipeInput !== 'angka' && norm(inp.value) === norm(nilai)
+if (!sama) {
+  if (@V.tipeInput === 'tanggal') await ketikTanggal(inp, nilai, @V.jedaMs)
+  else if (@V.tipeInput === 'angka') {
+    if (!(await ketikAngka(inp, String(nilai).replace(/\\D/g, '')))) henti('Langkah @N: angka tidak sesuai target ' + nilai + '. Tampil: "' + inp.value + '"')
+  } else { inp.focus(); isiTeks(inp, nilai); if (@V.jedaMs > 0) await sleep(@V.jedaMs) }
+}
+if (@V.validasiCocok && @V.tipeInput !== 'angka' && norm(inp.value) !== norm(nilai)) {
+  henti('Langkah @N: nilai tidak sesuai. Tampil: "' + inp.value + '", seharusnya: "' + nilai + '"')
+}
+await jalankanKeys(@V.urutanKey, @V.jedaKeyMs, inp)
+log('@N. ' + @V.nama + ' -> ' + inp.value)`);
+          break;
+        case 'checkbox':
+          body = T(`
+const lb = cariElemenTeks(@V.labelKolom, true, @V.lingkup) || cariElemenTeks(@V.labelKolom, false, @V.lingkup)
+const cb = lb && [...document.querySelectorAll('input[type="checkbox"], input[type="radio"]')].find((i) => after(lb, i) && dalam(i, @V.lingkup))
+if (!cb) henti('Langkah @N: checkbox "' + @V.labelKolom + '" tidak ditemukan')
+if (cb.checked !== @V.centang) {
+  cb.click()
+  await sleep(300)
+  if (cb.checked !== @V.centang) {
+    ;(cb.closest('.p-checkbox')?.querySelector('.p-checkbox-box') || cb.parentElement).click()
+    await sleep(300)
+  }
+}
+if (cb.checked !== @V.centang) henti('Langkah @N: gagal mengubah status "' + @V.labelKolom + '"')
+if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+log('@N. ' + @V.nama + ' -> ' + (cb.checked ? 'tercentang' : 'tidak dicentang'))`);
+          break;
+        case 'radio_option':
+          body = T(`
+const lbG = cariElemenTeks(@V.labelGrup, true, @V.lingkup) || cariElemenTeks(@V.labelGrup, false, @V.lingkup)
+if (!lbG) henti('Langkah @N: label "' + @V.labelGrup + '" tidak ditemukan')
+const pil = tok(@V.teksPilihan)
+const lbP = [...document.querySelectorAll('*')].find((e) => e.children.length === 0 && norm(e.textContent) === pil && visible(e) && !(box && box.contains(e)) && after(lbG, e) && dalam(e, @V.lingkup))
+if (!lbP) henti('Langkah @N: pilihan "' + pil + '" tidak ditemukan')
+const radio = [...document.querySelectorAll('input[type="radio"]')].filter((r) => after(lbG, r) && before(lbP, r)).pop()
+if (!radio) henti('Langkah @N: radio untuk "' + pil + '" tidak ditemukan')
+if (!radio.checked) {
+  lbP.click()
+  await sleep(500)
+  if (!radio.checked) {
+    ;(radio.closest('.p-radiobutton')?.querySelector('.p-radiobutton-box') || radio.parentElement).click()
+    await sleep(500)
+  }
+}
+if (!radio.checked) henti('Langkah @N: gagal memilih "' + pil + '"')
+if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+log('@N. ' + @V.nama + ' -> ' + pil)`);
+          break;
+        case 'dropdown_key':
+          body = T(`
+const dd = dropdownByLabel(@V.labelDropdown, @V.lingkup)
+if (!dd) henti('Langkah @N: dropdown "' + @V.labelDropdown + '" tidak ditemukan. Dropdown di halaman: ' + daftarDropdown())
+log('   Dropdown ' + infoDD(dd) + ' (cocok lewat ' + caraDD + ')')
+if (dd.classList.contains('p-disabled')) henti('Langkah @N: dropdown "' + @V.labelDropdown + '" nonaktif')
+await bukaDropdown(dd)
+if (@V.jedaKlikMs > 0) await sleep(@V.jedaKlikMs)
+const fokus = document.querySelector('.p-dropdown-panel .p-dropdown-filter') || dd.querySelector('input, [tabindex]') || dd
+for (let k = 0; k < @V.jumlahTekan; k++) {
+  await kirimTombolKey(@V.tombolKey, fokus)
+  if (@V.jedaKeyMs > 0) await sleep(@V.jedaKeyMs)
+}
+if (@V.enterAkhir) { await kirimTombolKey('Enter', fokus); await sleep(150) }
+log('@N. ' + @V.nama + ' -> ' + tampilDropdown(dd))`);
+          break;
+        case 'dropdown_select':
+          body = T(`
+const dd = dropdownByLabel(@V.labelDropdown, @V.lingkup)
+if (!dd) henti('Langkah @N: dropdown "' + @V.labelDropdown + '" tidak ditemukan. Dropdown di halaman: ' + daftarDropdown())
+log('   Dropdown ' + infoDD(dd) + ' (cocok lewat ' + caraDD + ')')
+const want = tok(@V.nilaiPilihan)
+const kini = () => tampilDropdown(dd)
+const sudah = () => @V.modeDropdown === 'kode' ? norm(kini().split(' - ')[0]).toUpperCase().endsWith('.' + want.toUpperCase()) : low(kini()).startsWith(low(want))
+if (!sudah()) {
+  const err = @V.modeDropdown === 'cari' ? await pilihDropdownCari(dd, want, @V.ambilPertama) : await pilihDropdown(dd, @V.modeDropdown === 'kode' ? testerKode(want) : testerBiasa(want))
+  if (err) henti('Langkah @N: ' + err)
+  if (@V.modeDropdown !== 'cari' && !sudah()) henti('Langkah @N: pilihan tidak sesuai. Tampil: "' + kini() + '"')
+}
+if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+log('@N. ' + @V.nama + ' -> ' + kini())`);
+          break;
+        case 'find_text_keys':
+          body = T(`
+const teks = tok(@V.cariTeks)
+const elTeks = cariElemenTeks(teks, true, @V.lingkup) || cariElemenTeks(teks, false, @V.lingkup)
+if (!elTeks) henti('Langkah @N: teks "' + teks + '" tidak ditemukan')
+let target = elTeks
+if (@V.targetFokus === 'input_after') {
+  target = daftarFokus().find((x) => after(elTeks, x) && dalam(x, @V.lingkup))
+  if (!target) henti('Langkah @N: elemen fokus setelah "' + teks + '" tidak ditemukan')
+  target.focus()
+} else {
+  elTeks.click()
+  elTeks.focus()
+}
+await sleep(150)
+await jalankanKeys(@V.urutanKey, @V.jedaKeyMs, target)
+log('@N. ' + @V.nama + ' -> selesai')`);
+          break;
+        case 'press_keys':
+          body = T(`
+const teksAwal = tok(@V.cariTeks)
+let awal = null
+if (teksAwal) {
+  const elT = cariElemenTeks(teksAwal, true, @V.lingkup) || cariElemenTeks(teksAwal, false, @V.lingkup)
+  if (!elT) henti('Langkah @N: teks "' + teksAwal + '" tidak ditemukan')
+  awal = daftarFokus().find((x) => after(elT, x) && dalam(x, @V.lingkup)) || elT
+  if (typeof awal.focus === 'function') awal.focus()
+  log('   Fokus awal: ' + deskripsi(awal))
+} else {
+  const a = document.activeElement
+  awal = a && a !== document.body ? a : (terakhir && document.contains(terakhir) ? terakhir : null)
+  if (!awal) log('   PERINGATAN: tidak ada elemen yang fokus, Tab dimulai dari awal halaman. Isi "Fokus Awal" agar tepat.')
+  else log('   Fokus awal: ' + deskripsi(awal) + (awal !== a ? ' (elemen yang terakhir diklik)' : ''))
+}
+await jalankanKeys(@V.urutanKey, @V.jedaKeyMs, awal)
+if (@V.jedaMs > 0) await sleep(@V.jedaMs)
+log('@N. ' + @V.nama + ' -> selesai')`);
+          break;
+        case 'wait':
+          body = T(`
+const t = tok(@V.teksTunggu)
+const adaDialog = () => dialogTampak().some((d) => !t || low(d.textContent).includes(low(t)))
+const tombolAktif = () => {
+  const b = [...document.querySelectorAll('button')].find((x) => visible(x) && !(box && box.contains(x)) && norm(x.textContent) === t && dalam(x, @V.lingkup))
+  return !!b && !b.disabled
+}
+const mode = @V.modeWait
+if (mode === 'sleep') {
+  await sleep(@V.durasiMs)
+} else {
+  const ok = await tunggu(() => {
+    if (mode === 'text_visible') return !!cariElemenTeks(t, false, @V.lingkup)
+    if (mode === 'text_hidden') return !cariElemenTeks(t, false, @V.lingkup)
+    if (mode === 'dialog_open') return adaDialog()
+    if (mode === 'dialog_closed') return !adaDialog()
+    return tombolAktif()
+  }, @V.durasiMs)
+  if (!ok) henti('Langkah @N: timeout (' + mode + ') "' + t + '"')
+}
+log('@N. ' + @V.nama + ' -> selesai')`);
+          break;
+        default:
+          body = (c.kode || '') + '\n' + 'log(' + JSON.stringify(n + '. ' + st.nama + ' -> selesai') + ')';
+      }
+
+      const ind = (x, sp) => x.split('\n').map((l) => sp + l).join('\n');
+      const nama = String(st.nama).replace(/[\r\n]+/g, ' ');
+      const code = [
+        '    // Langkah ' + n + ': ' + nama,
+        '    try {',
+        ind(body, '      '),
+        '    } catch (e) {',
+        "      if (LANJUT_JIKA_ERROR && !batal) log('LEWATI langkah " + n + ": ' + e.message)",
+        '      else throw e',
+        '    }',
+        '    if (JEDA_ANTAR_LANGKAH > 0) await sleep(JEDA_ANTAR_LANGKAH)'
+      ].join('\n');
+      return { param, code };
+    }
+
+    // Nilai isian langkah yang otomatis dipindah ke blok DATA di atas output: [field nilai, field label]
+    const HOIST = { fill_input: ['nilai', 'labelKolom'], dropdown_select: ['nilaiPilihan', 'labelDropdown'], radio_option: ['teksPilihan', 'labelGrup'] };
+    const slugVar = (label) => {
+      const w = String(label || '').split(/[^A-Za-z0-9]+/).filter(Boolean);
+      let s = w.map((x, i) => (i ? x.charAt(0).toUpperCase() + x.slice(1) : x.charAt(0).toLowerCase() + x.slice(1))).join('');
+      if (!s) s = 'nilai';
+      if (/^\d/.test(s)) s = 'v' + s;
+      return s;
+    };
+    const qJs = (s) => "'" + String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, '\\n') + "'";
+
+    const minify = (s) => s.split('\n').filter((l) => l.trim() && !/^\s*\/\//.test(l)).join('\n');
+
+    new Vue({
+      el: '#app',
+      data() {
+        return {
+          stepTypes: STEP_TYPES,
+          fields: FIELDS,
+          hints: HINTS,
+          keyOpts: KEY_OPTS,
+          globalCfg: Object.assign(defGlobal()),
+          steps: [],
+          copied: false,
+          outTab: 'script',
+          menuOpen: false,
+          toast: '',
+          toastTimer: null,
+          profiles: {},
+          selProfile: '',
+          newProfileName: '',
+          dragIdx: null,
+          overIdx: null,
+          hist: [],
+          histIdx: -1,
+          histTimer: null
+        };
+      },
+      created() {
+        this.loadFromStorage();
+        try { this.profiles = JSON.parse(localStorage.getItem(PROFILE_KEY)) || {}; } catch (e) { this.profiles = {}; }
+      },
+      mounted() {
+        this.hist = [this.snap];
+        this.histIdx = 0;
+        window.addEventListener('click', () => { this.menuOpen = false; });
+        window.addEventListener('keydown', (e) => {
+          const t = e.target.tagName;
+          if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return;
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); }
+          else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); this.redo(); }
+        });
+      },
+      watch: {
+        snap() {
+          this.saveToStorage();
+          clearTimeout(this.histTimer);
+          this.histTimer = setTimeout(this.pushHist, 500);
+        }
+      },
+      computed: {
+        snap() { return JSON.stringify({ globalCfg: this.globalCfg, steps: this.steps }); },
+        activeStepsCount() { return this.steps.filter((s) => s.aktif).length; },
+        warnings() {
+          return this.steps
+            .map((s, idx) => ({ idx, nama: s.nama, msgs: s.aktif ? this.stepWarn(s) : [] }))
+            .filter((w) => w.msgs.length);
+        },
+        generatedScript() {
+          const params = [];
+          const bodies = [];
+          let n = 0;
+          const dataObj = {};
+          (this.globalCfg.variabel || []).forEach((v) => { if (/^[A-Za-z_]\w*$/.test(v.k)) dataObj[v.k] = String(v.v == null ? '' : v.v); });
+          const has = (k) => Object.prototype.hasOwnProperty.call(dataObj, k);
+          this.steps.forEach((st) => {
+            if (!st.aktif) return;
+            n++;
+            let s2 = st;
+            const h = HOIST[st.type];
+            if (h) {
+              const val = String(st.cfg[h[0]] == null ? '' : st.cfg[h[0]]);
+              const sudahVar = /^\{[A-Za-z_]\w*\}$/.test(val.trim()) && has(val.trim().slice(1, -1));
+              if (val.trim() && !sudahVar) {
+                const pilihan = String(st.cfg.namaVar || '').trim();
+                const nm = /^[A-Za-z_]\w*$/.test(pilihan) ? pilihan : slugVar(st.cfg[h[1]]);
+                let uniq = nm;
+                let i = 2;
+                while (has(uniq)) uniq = nm + i++;
+                dataObj[uniq] = val;
+                s2 = Object.assign({}, st, { cfg: Object.assign({}, st.cfg, { [h[0]]: '{' + uniq + '}' }) });
+              }
+            }
+            const g = genStep(s2, n);
+            if (g.param) params.push(g.param);
+            bodies.push(g.code);
+          });
+          const dKeys = Object.keys(dataObj);
+          const dataBlock = dKeys.length ? '{\n' + dKeys.map((k) => '    ' + k + ': ' + qJs(dataObj[k])).join(',\n') + '\n  }' : '{}';
+          const paramsBlock = params.length ? params.join('\n') : '  // (belum ada langkah aktif)';
+          const stepsBody = bodies.length ? bodies.join('\n\n') : "    log('Tidak ada langkah yang aktif')";
+          return document.getElementById('tpl-base').textContent
+            .replace('__TAMPILKAN_LOG__', () => String(!!this.globalCfg.tampilkanLog))
+            .replace('__LANJUT__', () => String(!!this.globalCfg.lanjutJikaError))
+            .replace('__SOROT__', () => String(this.globalCfg.sorotFokus !== false))
+            .replace('__JEDA_DEFAULT__', () => String(Number(this.globalCfg.jedaDefaultMs) || 0))
+            .replace('__DATA_BLOCK__', () => dataBlock)
+            .replace('__PARAMS_BLOCK__', () => paramsBlock)
+            .replace('__STEPS_BODY__', () => stepsBody);
+        },
+        outputText() {
+          const s = this.globalCfg.ringkas || this.outTab === 'bookmarklet' ? minify(this.generatedScript) : this.generatedScript;
+          return this.outTab === 'bookmarklet' ? 'javascript:' + encodeURIComponent(minify(this.generatedScript)) : s;
+        }
+      },
+      methods: {
+        notify(msg) {
+          this.toast = msg;
+          clearTimeout(this.toastTimer);
+          this.toastTimer = setTimeout(() => (this.toast = ''), 1800);
+        },
+        // --- Langkah ---
+        addStep(type) {
+          this.steps.push(makeStep(type));
+          this.$nextTick(() => {
+            const c = document.querySelectorAll('[data-card]');
+            if (c.length) c[c.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+        },
+        removeStep(idx) { this.steps.splice(idx, 1); },
+        duplicateStep(idx) {
+          const src = this.steps[idx];
+          const copy = makeStep(src.type, src.nama + ' (Copy)', src.cfg);
+          copy.aktif = src.aktif;
+          this.steps.splice(idx + 1, 0, copy);
+        },
+        moveStep(idx, dir) {
+          const to = idx + dir;
+          if (to < 0 || to >= this.steps.length) return;
+          this.steps.splice(to, 0, this.steps.splice(idx, 1)[0]);
+        },
+        toggleCollapse(step) { this.$set(step, 'collapsed', !step.collapsed); },
+        toggleAll(v) { this.steps.forEach((s) => this.$set(s, 'collapsed', v)); },
+        setAllAktif(v) { this.steps.forEach((s) => { s.aktif = v; }); },
+        balikAktif() { this.steps.forEach((s) => { s.aktif = !s.aktif; }); },
+        onDragStart(idx, e) {
+          this.dragIdx = idx;
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', String(idx));
+          const card = e.target.closest('[data-card]');
+          if (card && e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(card, 20, 20);
+        },
+        onDrop(idx) {
+          if (this.dragIdx !== null && this.dragIdx !== idx) {
+            this.steps.splice(idx, 0, this.steps.splice(this.dragIdx, 1)[0]);
+          }
+          this.dragIdx = null;
+          this.overIdx = null;
+        },
+        stepWarn(st) {
+          const c = st.cfg, w = [];
+          const need = (v, l) => { if (!String(v == null ? '' : v).trim()) w.push(l + ' kosong'); };
+          switch (st.type) {
+            case 'click_button': need(c.teksTombol, 'Teks tombol'); break;
+            case 'click_selector': need(c.selector, 'Selector'); break;
+            case 'click_text': need(c.cariTeks, 'Teks elemen'); break;
+            case 'fill_input': need(c.labelKolom, 'Label kolom'); need(c.nilai, 'Nilai'); break;
+            case 'checkbox': need(c.labelKolom, 'Label'); break;
+            case 'dropdown_key': need(c.labelDropdown, 'Label dropdown'); break;
+            case 'dropdown_select': need(c.labelDropdown, 'Label dropdown'); need(c.nilaiPilihan, 'Nilai pilihan'); break;
+            case 'find_text_keys': need(c.cariTeks, 'Teks pencarian'); if (!(c.urutanKey || []).length) w.push('urutan tombol kosong'); break;
+            case 'press_keys': if (!(c.urutanKey || []).length) w.push('urutan tombol kosong'); break;
+            case 'radio_option': need(c.labelGrup, 'Label grup'); need(c.teksPilihan, 'Teks pilihan'); break;
+            case 'wait': if (['text_visible', 'text_hidden', 'button_enabled'].indexOf(c.modeWait) >= 0) need(c.teksTunggu, 'Teks tunggu'); break;
+            case 'custom_js': need(c.kode, 'Kode'); break;
+          }
+          return w;
+        },
+        ringkas(st) {
+          const c = st.cfg;
+          const m = {
+            click_button: () => 'Klik "' + c.teksTombol + '"',
+            click_selector: () => 'Klik ' + c.selector,
+            table_row: () => c.aksi + ' baris ke-' + c.barisKe + (c.headerTabel ? ' tabel "' + c.headerTabel + '"' : '') + (c.teksBaris ? ' berisi "' + c.teksBaris + '"' : ''),
+            click_text: () => c.aksi + ' pada "' + c.cariTeks + '"' + ((c.urutanKey || []).length ? ' → ' + c.urutanKey.map((u) => u.key + '×' + u.count).join(', ') : ''),
+            fill_input: () => c.labelKolom + ' ← ' + c.nilai + ((c.urutanKey || []).length ? ' → ' + c.urutanKey.map((u) => u.key + '×' + u.count).join(', ') : ''),
+            checkbox: () => (c.centang ? 'Centang ' : 'Hapus centang ') + c.labelKolom,
+            dropdown_key: () => c.labelDropdown + ' → ' + c.tombolKey + ' ×' + c.jumlahTekan,
+            dropdown_select: () => c.labelDropdown + ' ← ' + c.nilaiPilihan,
+            find_text_keys: () => 'Cari "' + c.cariTeks + '" → ' + (c.urutanKey || []).map((u) => u.key + '×' + u.count).join(', '),
+            press_keys: () => (c.urutanKey || []).map((u) => u.key + '×' + u.count).join(', '),
+            radio_option: () => c.labelGrup + ' ← ' + c.teksPilihan,
+            wait: () => (c.modeWait === 'sleep' ? 'Tunggu ' + c.durasiMs + ' ms' : c.modeWait + ' "' + c.teksTunggu + '"'),
+            custom_js: () => String(c.kode || '').split('\n')[0]
+          };
+          return (m[st.type] || (() => ''))();
+        },
+        // --- Riwayat Undo/Redo ---
+        pushHist() {
+          if (this.hist[this.histIdx] === this.snap) return;
+          this.hist = this.hist.slice(0, this.histIdx + 1);
+          this.hist.push(this.snap);
+          if (this.hist.length > 60) this.hist.shift();
+          this.histIdx = this.hist.length - 1;
+        },
+        applySnap(s) {
+          const d = JSON.parse(s);
+          this.globalCfg = Object.assign(defGlobal(), d.globalCfg);
+          this.steps = d.steps.map(normalizeStep);
+        },
+        undo() {
+          clearTimeout(this.histTimer);
+          this.pushHist();
+          if (this.histIdx > 0) { this.histIdx--; this.applySnap(this.hist[this.histIdx]); }
+        },
+        redo() {
+          if (this.histIdx < this.hist.length - 1) { this.histIdx++; this.applySnap(this.hist[this.histIdx]); }
+        },
+        // --- Penyimpanan ---
+        saveToStorage() { try { localStorage.setItem(STORAGE_KEY, this.snap); } catch (e) {} },
+        loadFromStorage() {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) {
+              const d = JSON.parse(raw);
+              this.globalCfg = Object.assign(defGlobal(), d.globalCfg);
+              if (Array.isArray(d.steps) && d.steps.length) { this.steps = d.steps.map(normalizeStep); return; }
+            }
+          } catch (e) {}
+          this.steps = defaultSteps();
+        },
+        resetDefault() {
+          if (!confirm('Kembalikan ke langkah awal? (Bisa di-Undo)')) return;
+          this.globalCfg = Object.assign(defGlobal());
+          this.steps = defaultSteps();
+        },
+        // --- Profil ---
+        persistProfiles() { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(this.profiles)); } catch (e) {} },
+        saveProfile() {
+          const name = this.newProfileName.trim() || this.selProfile;
+          if (!name) return this.notify('Isi nama profil dulu');
+          this.$set(this.profiles, name, JSON.parse(this.snap));
+          this.persistProfiles();
+          this.selProfile = name;
+          this.newProfileName = '';
+          this.notify('Profil "' + name + '" disimpan');
+        },
+        loadProfile() {
+          const p = this.profiles[this.selProfile];
+          if (!p) return;
+          this.applySnap(JSON.stringify(p));
+          this.notify('Profil "' + this.selProfile + '" dimuat');
+        },
+        deleteProfile() {
+          if (!this.selProfile || !confirm('Hapus profil "' + this.selProfile + '"?')) return;
+          this.$delete(this.profiles, this.selProfile);
+          this.persistProfiles();
+          this.selProfile = '';
+        },
+        // --- Ekspor/Impor ---
+        download(name, text, type) {
+          const url = URL.createObjectURL(new Blob([text], { type }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = name;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+        exportJson() { this.download('konfigurasi_langkah_autofill.json', JSON.stringify(JSON.parse(this.snap), null, 2), 'application/json'); },
+        downloadJs() { this.download('autostep.js', this.globalCfg.ringkas ? minify(this.generatedScript) : this.generatedScript, 'text/javascript'); },
+        importJson(event) {
+          const file = event.target.files && event.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const p = JSON.parse(e.target.result);
+              if (!Array.isArray(p.steps)) throw new Error('format');
+              this.applySnap(JSON.stringify({ globalCfg: p.globalCfg, steps: p.steps }));
+              this.notify('Import berhasil');
+            } catch (err) {
+              alert('File JSON tidak valid');
+            }
+          };
+          reader.readAsText(file);
+          event.target.value = '';
+        },
+        async copyOutput() {
+          const text = this.outputText;
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch (e) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+          }
+          this.copied = true;
+          setTimeout(() => (this.copied = false), 1800);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
