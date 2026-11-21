@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Generator Skrip Auto-Fill Perintah Bayar</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 2 CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.min.js"></script>
+  <style>
+    [v-cloak] { display: none; }
+    textarea::-webkit-scrollbar, pre::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    textarea::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans antialiased">
+  <div id="app" v-cloak class="max-w-7xl mx-auto p-4 md:p-6">
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-6">
+      <div>
+        <h1 class="text-xl md:text-2xl font-bold text-emerald-400 tracking-tight">
+          Script Generator Perintah Bayar
+        </h1>
+        <p class="text-xs md:text-sm text-slate-400 mt-0.5">
+          Paste objek <code class="text-amber-300 bg-slate-800 px-1.5 py-0.5 rounded">const DATA = {...}</code> atau edit langsung di form untuk menghasilkan skrip siap tempel ke Console.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button
+          @click="resetDefault"
+          class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition"
+        >
+          Reset Contoh
+        </button>
+        <button
+          @click="simpanRiwayat"
+          class="px-3 py-1.5 text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition"
+        >
+          + Simpan ke Riwayat
+        </button>
+      </div>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <!-- KOLOM KIRI: INPUT -->
+      <div class="lg:col-span-6 space-y-5">
+        <!-- Box 1: Quick Paste const DATA -->
+        <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-xs font-semibold uppercase tracking-wider text-amber-400">
+              1. Paste Cepat (const DATA = { ... })
+            </label>
+            <span v-if="parseStatus" :class="parseError ? 'text-rose-400' : 'text-emerald-400'" class="text-xs font-medium">
+              {{ parseStatus }}
+            </span>
+          </div>
+          <textarea
+            v-model="rawInput"
+            @input="parseRawData"
+            rows="4"
+            placeholder="Paste baris const DATA = { tgl: '...', ... } di sini..."
+            class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs font-mono text-amber-200 focus:outline-none focus:border-emerald-500 transition"
+          ></textarea>
+        </div>
+
+        <!-- Box 2: Form dinamis (mengikuti const DATA dan opsi pada template) -->
+        <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 shadow-sm space-y-4">
+          <div class="flex items-center justify-between gap-2 border-b border-slate-700/70 pb-2">
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+              2. Detail Parameter Transaksi
+            </h2>
+            <span class="text-[11px] text-slate-400 text-right">{{ kunciForm.length }} kolom · mengikuti const DATA di template · sinkron ke output</span>
+          </div>
+
+          <div v-if="!kunciForm.length" class="text-xs text-slate-400">Belum ada kolom. Tempel const DATA di kotak 1 atau simpan template yang memiliki const DATA.</div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div v-for="k in kunciForm" :key="k" :class="panjang(k) ? 'col-span-2 sm:col-span-3' : ''">
+              <div class="flex justify-between items-center gap-2 mb-1">
+                <label class="block text-xs text-slate-400 min-w-0 truncate">
+                  {{ labelDari(k) }} <span class="font-mono text-[10px] text-slate-500">{{ k }}</span>
+                </label>
+                <span v-if="isNilai(k)" class="text-[11px] text-emerald-400 font-mono shrink-0">Rp {{ formatRupiah(form[k]) }}</span>
+              </div>
+              <textarea
+                v-if="panjang(k)"
+                v-model="form[k]"
+                rows="3"
+                class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm focus:border-emerald-500 focus:outline-none"
+              ></textarea>
+              <input
+                v-else
+                v-model="form[k]"
+                @input="isNilai(k) && bersihkanNilai(k)"
+                type="text"
+                :class="isNilai(k) ? 'font-mono text-emerald-300' : ''"
+                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <!-- Opsi yang ditemukan di template (flag true/false dan angka) -->
+          <div v-if="kunciOpsi.length" class="pt-2 border-t border-slate-700/70">
+            <span class="block text-xs font-semibold text-slate-400 mb-2">Opsi Pengaman & Tampilan:</span>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <template v-for="n in kunciOpsi">
+                <label v-if="typeof flags[n] === 'boolean'" :key="n" class="flex items-center gap-2 bg-slate-900/90 border border-slate-700 p-2 rounded-lg cursor-pointer hover:border-slate-600">
+                  <input type="checkbox" v-model="flags[n]" class="accent-emerald-500 rounded" />
+                  <span>{{ labelOpsi(n) }}</span>
+                </label>
+                <label v-else :key="n" class="flex items-center gap-2 bg-slate-900/90 border border-slate-700 p-2 rounded-lg hover:border-slate-600">
+                  <span class="flex-1">{{ labelOpsi(n) }}</span>
+                  <input type="number" v-model.number="flags[n]" class="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-right font-mono focus:border-emerald-500 focus:outline-none" />
+                </label>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Box: Template Script (tersimpan di localStorage) -->
+        <details class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 shadow-sm">
+          <summary class="cursor-pointer select-none flex flex-wrap items-center gap-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-sky-400">Template Script</span>
+            <span
+              :class="templateTersimpan ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-slate-700/50 text-slate-300 border-slate-600'"
+              class="text-[11px] px-2 py-0.5 rounded-full border"
+            >{{ templateTersimpan ? 'Kustom (tersimpan di browser)' : 'Bawaan' }}</span>
+          </summary>
+          <div class="mt-3 space-y-3">
+            <p class="text-[11px] text-slate-400 leading-relaxed">
+              Tempel skrip lengkap yang sudah teruji. Baris <code class="text-amber-300 bg-slate-900 px-1 rounded">const DATA = {...}</code>
+              di dalamnya otomatis diganti dengan data dari form di atas, dan nilai
+              <code class="text-amber-300 bg-slate-900 px-1 rounded">TAMPILKAN_LOG</code>,
+              <code class="text-amber-300 bg-slate-900 px-1 rounded">KONFIRMASI</code>,
+              <code class="text-amber-300 bg-slate-900 px-1 rounded">SIMPAN_UTAMA</code>,
+              <code class="text-amber-300 bg-slate-900 px-1 rounded">KONFIRMASI_UTAMA</code> mengikuti kotak centang.
+              Penanda <code class="text-amber-300 bg-slate-900 px-1 rounded">__DATA_LINE__</code> dan
+              <code class="text-amber-300 bg-slate-900 px-1 rounded">__NAMA_FLAG__</code> juga didukung.
+            </p>
+            <textarea
+              v-model="templateDraft"
+              rows="10"
+              spellcheck="false"
+              placeholder="Tempel skrip lengkap di sini, lalu klik Simpan Template..."
+              class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-200 focus:outline-none focus:border-emerald-500 transition"
+            ></textarea>
+            <div v-if="templateInfo" class="flex flex-wrap gap-1.5 text-[11px]">
+              <span :class="templateInfo.syntaxOk ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10' : 'text-rose-300 border-rose-500/40 bg-rose-500/10'" class="px-2 py-0.5 rounded-full border">
+                {{ templateInfo.syntaxOk ? '✓ Sintaks valid' : '✗ ' + templateInfo.syntaxMsg }}
+              </span>
+              <span :class="templateInfo.hasData ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10' : 'text-rose-300 border-rose-500/40 bg-rose-500/10'" class="px-2 py-0.5 rounded-full border">
+                {{ templateInfo.hasData ? '✓ const DATA ditemukan' : '✗ const DATA tidak ditemukan' }}
+              </span>
+              <span class="px-2 py-0.5 rounded-full border text-slate-300 border-slate-600 bg-slate-700/40" :title="templateInfo.kolom.join(', ')">
+                Kolom DATA: {{ templateInfo.kolom.length || 'tidak terbaca' }}
+              </span>
+              <span class="px-2 py-0.5 rounded-full border text-slate-300 border-slate-600 bg-slate-700/40">
+                Opsi: {{ templateInfo.flags.length ? templateInfo.flags.join(', ') : 'tidak ada' }}
+              </span>
+              <span class="px-2 py-0.5 rounded-full border text-slate-300 border-slate-600 bg-slate-700/40">
+                {{ templateInfo.panjang.toLocaleString('id-ID') }} karakter
+              </span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                @click="simpanTemplate"
+                :disabled="!templateDraft.trim()"
+                class="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition disabled:opacity-30 disabled:cursor-not-allowed"
+              >Simpan Template</button>
+              <button
+                @click="templateDraft = defaultTemplate()"
+                class="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition"
+              >Muat Bawaan ke Editor</button>
+              <button
+                v-if="templateTersimpan"
+                @click="hapusTemplate"
+                class="px-3 py-1.5 text-xs font-medium bg-rose-950/70 hover:bg-rose-900/70 text-rose-200 border border-rose-800/70 rounded-lg transition"
+              >Kembalikan ke Bawaan</button>
+              <span v-if="templateStatus" :class="templateError ? 'text-rose-400' : 'text-emerald-400'" class="text-xs font-medium">{{ templateStatus }}</span>
+            </div>
+          </div>
+        </details>
+
+        <!-- Box 3: Riwayat Tersimpan -->
+        <div v-if="history.length" class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Riwayat Tersimpan ({{ history.length }})
+            </h3>
+            <button @click="hapusSemuaRiwayat" class="text-[11px] text-rose-400 hover:underline">
+              Hapus Semua
+            </button>
+          </div>
+          <div class="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+            <div
+              v-for="(item, idx) in history"
+              :key="idx"
+              class="flex items-center justify-between bg-slate-900 border border-slate-700/70 px-3 py-2 rounded-lg text-xs hover:border-emerald-500/50 transition"
+            >
+              <div @click="muatRiwayat(item)" class="cursor-pointer flex-1 truncate pr-2">
+                <span class="font-semibold text-emerald-400">{{ ringkasRiwayat(item) }}</span>
+                <div class="text-[11px] text-slate-400 truncate">{{ terpanjangRiwayat(item) }}</div>
+              </div>
+              <button @click="hapusRiwayat(idx)" class="text-slate-500 hover:text-rose-400 px-1.5">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KOLOM KANAN: OUTPUT SCRIPT -->
+      <div class="lg:col-span-6 flex flex-col">
+        <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 shadow-sm flex-1 flex flex-col">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div>
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                3. Hasil Script Siap Pakai
+              </h2>
+              <p class="text-[11px] text-slate-400">
+                Tempel di DevTools Console (F12) halaman SAKTI · Template:
+                <span :class="templateTersimpan ? 'text-emerald-300' : 'text-slate-300'" class="font-semibold">{{ templateTersimpan ? 'kustom' : 'bawaan' }}</span>
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                @click="downloadScript"
+                class="px-3 py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-100 rounded-lg transition"
+              >
+                Unduh .js
+              </button>
+              <button
+                @click="copyOutput"
+                :class="copied ? 'bg-emerald-600 text-white' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'"
+                class="px-4 py-1.5 text-xs font-bold rounded-lg transition shadow-sm"
+              >
+                {{ copied ? '✓ Tersalin ke Clipboard!' : 'Salin Script' }}
+              </button>
+            </div>
+          </div>
+
+          <pre class="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-3.5 text-[11.5px] leading-relaxed font-mono text-slate-200 overflow-auto max-h-[72vh] select-all">{{ generatedScript }}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DEFAULT_DATA = {
+      tgl: '21 Nov 2026',
+      jenis: 'UP',
+      sumberDana: 'RM',
+      program: 'WA',
+      vendor: 'SPBU',
+      uraian: 'Belanja pemeliharaan peralatan dan mesin berupa pembelian bahan bakar untuk kendaraan roda empat pada Kanwil Ditjen Perbendaharaan Provinsi Jawa Timur sesuai nota terlampir',
+      aktifitas: '4715',
+      kro: 'EBA',
+      akun: '523121',
+      item: '000171',
+      nilai: '2500000'
+    };
+  </script>
+
+  <script type="text/plain" id="script-template">    (async () => {
+
+  // ===== DATA (ubah di sini) =====
+
+
+__DATA_LINE__
+
+  
+
+
+  const TAMPILKAN_LOG = __TAMPILKAN_LOG__ // false = sembunyikan kotak hitam proses pengerjaan
+  const KONFIRMASI = __KONFIRMASI__ // true = tanya dulu sebelum klik Simpan di Pendetailan dan jendela Tambah
+  const SIMPAN_UTAMA = __SIMPAN_UTAMA__ // true = skrip juga mengklik Simpan utama di bawah halaman
+  const KONFIRMASI_UTAMA = __KONFIRMASI_UTAMA__ // false = Simpan utama diklik tanpa alert (hanya berlaku kalau SIMPAN_UTAMA = true)
+  // ===============================
+
+  // Kotak status (opsional, bisa dipilih/disalin, tidak menutup sendiri)
+  const lama = document.getElementById('nudge-log')
+  if (lama) lama.remove()
+  let box = null
+  let isi = null
+  if (TAMPILKAN_LOG) {
+    box = document.createElement('div')
+    box.id = 'nudge-log'
+    Object.assign(box.style, {
+      position: 'fixed', top: '8px', right: '8px', zIndex: 99999, background: '#1f2430',
+      color: '#e8eaf0', font: '12px/1.5 Segoe UI, sans-serif', padding: '10px 12px',
+      borderRadius: '8px', width: '460px', maxHeight: '88vh', display: 'flex',
+      flexDirection: 'column', boxShadow: '0 2px 10px rgba(0,0,0,.4)'
+    })
+    const bar = document.createElement('div')
+    Object.assign(bar.style, { display: 'flex', gap: '6px', marginBottom: '6px', flex: '0 0 auto' })
+    isi = document.createElement('div')
+    Object.assign(isi.style, { overflow: 'auto', userSelect: 'text', cursor: 'text', wordBreak: 'break-word', whiteSpace: 'pre-wrap' })
+    const tombolKotak = (teks, fn) => {
+      const b = document.createElement('button')
+      b.textContent = teks
+      Object.assign(b.style, { padding: '3px 10px', border: '1px solid #3a4258', borderRadius: '6px', background: '#2a3142', color: '#e8eaf0', cursor: 'pointer', font: '12px Segoe UI, sans-serif' })
+      b.onclick = fn
+      return b
+    }
+    bar.appendChild(tombolKotak('Salin semua', async function () {
+      const teks = isi.innerText
+      try { await navigator.clipboard.writeText(teks) } catch {
+        const ta = document.createElement('textarea')
+        ta.value = teks
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        ta.remove()
+      }
+      this.textContent = 'Tersalin'
+      setTimeout(() => (this.textContent = 'Salin semua'), 1500)
+    }))
+    bar.appendChild(tombolKotak('Tutup', () => box.remove()))
+    box.appendChild(bar)
+    box.appendChild(isi)
+    document.body.appendChild(box)
+  }
+  const log = (...a) => {
+    console.log('[Isi form]', ...a)
+    if (!isi) return
+    const d = document.createElement('div')
+    d.textContent = a.join(' ')
+    isi.appendChild(d)
+    isi.scrollTop = isi.scrollHeight
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim()
+  const low = (s) => norm(s).toLowerCase()
+  const visible = (e) => !!e && !!e.offsetParent
+  const after = (a, b) => !!(a && b && a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  const before = (a, b) => !!(a && b && a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING)
+  const henti = (m) => { throw new Error(m) }
+
+  function isiTeks(el, v) {
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    el.dispatchEvent(new Event('blur', { bubbles: true }))
+  }
+
+  // Untuk kotak filter dropdown: hanya event input (tanpa blur, supaya panel tidak menutup)
+  function ketikFilter(el, v) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: v.slice(-1) }))
+  }
+
+  function tekanEnter(el) {
+    const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }
+    el.dispatchEvent(new KeyboardEvent('keydown', init))
+    el.dispatchEvent(new KeyboardEvent('keypress', init))
+    el.dispatchEvent(new KeyboardEvent('keyup', init))
+  }
+
+  // Kolom bermasker angka: sisipkan teks seperti pengetikan, cadangan lewat setter
+  async function ketikAngka(el, digits) {
+    const hanyaAngka = (s) => String(s || '').replace(/\D/g, '')
+    const cocok = () => hanyaAngka(el.value) === digits || hanyaAngka(el.value) === digits + '00'
+    el.focus()
+    el.click()
+    await sleep(200)
+    el.select()
+    document.execCommand('insertText', false, digits)
+    await sleep(400)
+    if (!cocok()) {
+      el.focus()
+      el.select()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, digits)
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: digits }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+      await sleep(400)
+    }
+    el.dispatchEvent(new Event('blur', { bubbles: true }))
+    el.blur()
+    await sleep(400)
+    return cocok()
+  }
+
+  async function tunggu(kondisi, maxMs = 10000) {
+    const t0 = Date.now()
+    while (Date.now() - t0 < maxMs) {
+      if (kondisi()) return true
+      await sleep(200)
+    }
+    return false
+  }
+
+  const labelEl = (teks) =>
+    [...document.querySelectorAll('*')].find(
+      (e) =>
+        e.children.length === 0 &&
+        low(e.textContent).replace(/\s*:\s*$/, '') === low(teks) &&
+        visible(e) &&
+        (!box || !box.contains(e))
+    )
+  const dropdownByLabel = (teks) => {
+    const lb = labelEl(teks)
+    return lb ? [...document.querySelectorAll('.p-dropdown')].find((d) => visible(d) && after(lb, d)) : null
+  }
+  const tampil = (dd) => norm(dd?.querySelector('.p-dropdown-label')?.textContent)
+  const kosong = (dd) => !tampil(dd) || tampil(dd).startsWith('--')
+  const itemsPanel = () => [...document.querySelectorAll('.p-dropdown-panel .p-dropdown-item')]
+  const dialogTampak = () => [...document.querySelectorAll('.p-dialog')].filter(visible)
+  const dialogAtas = () => dialogTampak().slice(-1)[0]
+  const toasts = () => [...document.querySelectorAll('.p-toast-message')].map((t) => norm(t.textContent)).filter(Boolean)
+  const tombolDi = (dlg, nama) => dlg && [...dlg.querySelectorAll('button')].find((b) => visible(b) && norm(b.textContent) === nama)
+  const ringkasDialog = (d) =>
+    (norm(d.querySelector('.p-dialog-title')?.textContent) || '(tanpa judul)') + ': ' + norm(d.textContent).slice(0, 160)
+
+  // tester(teks) -> 2 cocok persis, 1 cocok sebagian, 0 tidak cocok
+  async function pilihDropdown(dd, tester, maxMs = 10000) {
+    const t0 = Date.now()
+    while (dd.classList.contains('p-disabled')) {
+      if (Date.now() - t0 > maxMs) return 'dropdown tetap nonaktif'
+      await sleep(200)
+    }
+    dd.click()
+    while (Date.now() - t0 < maxMs) {
+      const items = itemsPanel()
+      if (items.length) {
+        const skor = items.map((i) => tester(norm(i.textContent)))
+        const maks = Math.max(...skor)
+        const hits = maks > 0 ? items.filter((_, n) => skor[n] === maks) : []
+        if (hits.length === 1) {
+          hits[0].click()
+          await sleep(500)
+          return null
+        }
+        document.body.click()
+        return hits.length
+          ? 'pilihan ambigu: ' + hits.map((h) => norm(h.textContent)).join(' | ')
+          : 'pilihan tidak ditemukan. Tersedia: ' + items.map((i) => norm(i.textContent)).join(' | ')
+      }
+      await sleep(200)
+    }
+    document.body.click()
+    return 'pilihan tidak muncul'
+  }
+  const testerBiasa = (want) => (t) => (low(t) === low(want) ? 2 : low(t).startsWith(low(want)) ? 1 : 0)
+  const testerKode = (kode) => (t) => (norm(t.split(' - ')[0]).toUpperCase().endsWith('.' + kode.toUpperCase()) ? 2 : 0)
+
+  // Dropdown dengan kotak filter: ketik kode, tunggu daftar stabil, lalu pilih yang kodenya cocok
+  async function pilihDropdownCari(dd, kode, maxMs = 20000) {
+    const t0 = Date.now()
+    while (dd.classList.contains('p-disabled')) {
+      if (Date.now() - t0 > maxMs) return 'dropdown tetap nonaktif'
+      await sleep(200)
+    }
+    dd.click()
+    if (!(await tunggu(() => !!document.querySelector('.p-dropdown-panel'), 5000))) return 'panel pilihan tidak terbuka'
+    const filter = document.querySelector('.p-dropdown-panel .p-dropdown-filter')
+    if (filter) {
+      filter.focus()
+      ketikFilter(filter, kode)
+      let last = -1
+      let stabilSejak = Date.now()
+      while (Date.now() - t0 < maxMs) {
+        const n = itemsPanel().length
+        if (n !== last) { last = n; stabilSejak = Date.now() }
+        if (n > 0 && Date.now() - stabilSejak > 1000) break
+        await sleep(200)
+      }
+    } else {
+      await sleep(1000)
+    }
+    const items = itemsPanel()
+    if (!items.length) {
+      document.body.click()
+      return 'tidak ada pilihan untuk "' + kode + '"'
+    }
+    const skor = items.map((i) => {
+      const t = norm(i.textContent)
+      const k = low(t).split(/\s*-\s*|\s+/)[0]
+      if (k === low(kode)) return 3
+      if (low(t).startsWith(low(kode))) return 2
+      if (low(t).includes(low(kode))) return 1
+      return 0
+    })
+    const maks = Math.max(...skor)
+    const hits = maks > 0 ? items.filter((_, n) => skor[n] === maks) : []
+    if (hits.length === 1) {
+      hits[0].click()
+      await sleep(800)
+      return null
+    }
+    document.body.click()
+    return hits.length
+      ? 'pilihan ambigu: ' + hits.slice(0, 8).map((h) => norm(h.textContent)).join(' | ')
+      : 'pilihan tidak cocok. Tersedia: ' + items.slice(0, 8).map((i) => norm(i.textContent)).join(' | ')
+  }
+
+  // Meniru pengetikan: pilih semua teks, ganti, lalu keluar dari kolom
+  async function ketikTanggal(el, v) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    el.focus()
+    el.click()
+    await sleep(200)
+    el.select()
+    setter.call(el, v)
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: v }))
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Process' }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    await sleep(300)
+    // Tab: kalender menutup saat menerima Tab
+    const tab = { key: 'Tab', code: 'Tab', keyCode: 9, which: 9, bubbles: true, cancelable: true }
+    el.dispatchEvent(new KeyboardEvent('keydown', tab))
+    el.dispatchEvent(new KeyboardEvent('keyup', tab))
+    const berikut = [...document.querySelectorAll('input:not([type="hidden"]):not([disabled]), select, textarea, button:not([disabled])')]
+      .filter(visible)
+      .find((x) => after(el, x))
+    if (berikut) berikut.focus()
+    else el.blur()
+    await sleep(400)
+    if (document.querySelector('.p-datepicker')) {
+      document.body.click()
+      await sleep(300)
+    }
+  }
+
+  const dialogWP = () => dialogTampak().find((d) => /wajib pajak/i.test(d.textContent))
+  const dialogPend = () => dialogTampak().find((d) => /pendetailan coa/i.test(d.textContent))
+  const dialogTambah = () =>
+    dialogTampak().find(
+      (d) => /input\/ubah akun belanja/i.test(d.textContent) || [...d.querySelectorAll('button')].some((b) => norm(b.textContent) === 'Pendetailan')
+    )
+  const stripNama = (s) => low(s).replace(/^(pt|cv|ud|pd)\.?\s+/, '').replace(/[.,]/g, '').replace(/\s+/g, ' ').trim()
+  const barisPend = () => {
+    const p = dialogPend()
+    return p ? [...p.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td') && norm(r.textContent)) : []
+  }
+
+  // Mencatat struktur sebuah jendela ke kotak status (tanpa isi data)
+  function catatJendela(dlg) {
+    if (!dlg) return log('(tidak ada jendela untuk dicatat)')
+    log('--- Struktur jendela ---')
+    log('Judul: ' + (norm(dlg.querySelector('.p-dialog-title')?.textContent) || '(tanpa judul)'))
+    const th = [...dlg.querySelectorAll('th')].map((t) => norm(t.textContent)).filter(Boolean)
+    if (th.length) log('Kolom tabel: ' + th.join(' | '))
+    log('Baris tabel: ' + dlg.querySelectorAll('tbody tr').length)
+    ;[...dlg.querySelectorAll('input, textarea, button, .p-dropdown')].filter(visible).forEach((e, i) => {
+      const fc = e.getAttribute('formcontrolname') || e.getAttribute('name') || ''
+      const tipe = e.classList.contains('p-dropdown')
+        ? 'dropdown "' + tampil(e) + '"'
+        : e.tagName.toLowerCase() + (e.type ? '[' + e.type + ']' : '')
+      const teks = e.tagName === 'BUTTON' ? ' "' + norm(e.textContent).slice(0, 20) + '"' : ''
+      const ph = e.placeholder ? ' ph="' + e.placeholder + '"' : ''
+      const dis = e.disabled || e.classList.contains('p-disabled') ? ' NONAKTIF' : ''
+      log(i + ': ' + tipe + (fc ? ' fc=' + fc : '') + teks + ph + dis)
+    })
+  }
+
+  function diagnosa() {
+    const t = toasts()
+    log('   Pesan di layar: ' + (t.length ? t.join(' | ') : '(tidak ada)'))
+    const p = dialogPend()
+    if (p) {
+      const tidakValid = [...p.querySelectorAll('input.ng-invalid')].map((e) => e.getAttribute('formcontrolname') || e.className.slice(0, 20))
+      if (tidakValid.length) log('   Isian tidak valid: ' + tidakValid.join(', '))
+    }
+    log('   Dialog terbuka: ' + dialogTampak().map(ringkasDialog).join(' || '))
+  }
+
+  try {
+    // 1. Rekam
+    const rekam = [...document.querySelectorAll('button')].find((b) => visible(b) && norm(b.textContent) === 'Rekam')
+    if (!rekam) henti('tombol Rekam tidak ditemukan')
+    if (rekam.disabled) {
+      log('1. Rekam nonaktif (sudah mode rekam), dilewati')
+    } else {
+      rekam.click()
+      await sleep(1500)
+      log('1. Rekam diklik')
+    }
+
+    // 2. Tanggal
+    const lbT = labelEl('Tanggal Perintah Bayar')
+    const inpT = lbT && [...document.querySelectorAll('input')].find(
+      (i) => visible(i) && i.type !== 'radio' && i.type !== 'checkbox' && after(lbT, i)
+    )
+    if (!inpT) henti('kolom tanggal tidak ditemukan')
+    if (norm(inpT.value) === norm(DATA.tgl)) {
+      log('2. Tanggal sudah ' + inpT.value)
+    } else {
+      await ketikTanggal(inpT, DATA.tgl)
+      if (norm(inpT.value) !== norm(DATA.tgl)) {
+        log('   HTML kolom: ' + inpT.outerHTML.slice(0, 400))
+        henti('tanggal tidak sesuai. Tampil: "' + inpT.value + '"')
+      }
+      log('2. Tanggal diisi: ' + inpT.value)
+    }
+
+    // 3. Jenis Perintah Bayar
+    const lbJenis = labelEl('Jenis Perintah Bayar')
+    const radios = [...document.querySelectorAll('input[name="jenisPerintahBayar"], input[formcontrolname="jenisPerintahBayar"]')]
+    const lbPilihan = [...document.querySelectorAll('*')].find(
+      (e) => e.children.length === 0 && norm(e.textContent) === DATA.jenis && visible(e) && (!box || !box.contains(e)) && after(lbJenis, e)
+    )
+    const radio = lbPilihan && radios.filter((r) => before(lbPilihan, r)).pop()
+    if (!radio) henti('pilihan jenis tidak ditemukan: ' + DATA.jenis)
+    if (!radio.checked) {
+      lbPilihan.click()
+      await sleep(500)
+      if (!radio.checked) {
+        ;(radio.closest('.p-radiobutton')?.querySelector('.p-radiobutton-box') || radio.parentElement).click()
+        await sleep(500)
+      }
+    }
+    if (!radio.checked) henti('jenis perintah bayar gagal dipilih')
+    log('3. Jenis: ' + DATA.jenis)
+
+    // 4. Sumber Dana
+    const ddSD = dropdownByLabel('Sumber Dana')
+    if (!ddSD) henti('dropdown Sumber Dana tidak ditemukan')
+    if (low(tampil(ddSD)) !== low(DATA.sumberDana)) {
+      const err = await pilihDropdown(ddSD, testerBiasa(DATA.sumberDana))
+      if (err) henti('Sumber Dana, ' + err)
+    }
+    log('4. Sumber Dana: ' + tampil(ddSD))
+
+    // 5. Isian otomatis dari Sumber Dana
+    const turunan = ['KPPN', 'Cara Penarikan', 'No. Register']
+    const terisi = await tunggu(() => turunan.every((l) => dropdownByLabel(l) && !kosong(dropdownByLabel(l))), 10000)
+    if (!terisi) henti('isian otomatis (KPPN, Cara Penarikan, No. Register) belum lengkap')
+    log('5. KPPN, Cara Penarikan, No. Register terisi otomatis')
+
+    // 6. Program
+    const ddP = dropdownByLabel('Program')
+    if (!ddP) henti('dropdown Program tidak ditemukan')
+    const kodeSaatIni = () => norm(tampil(ddP).split(' - ')[0]).toUpperCase()
+    if (!kodeSaatIni().endsWith('.' + DATA.program.toUpperCase())) {
+      const err = await pilihDropdown(ddP, testerKode(DATA.program))
+      if (err) henti('Program, ' + err)
+    }
+    if (!kodeSaatIni().endsWith('.' + DATA.program.toUpperCase())) henti('Program tidak sesuai: ' + tampil(ddP))
+    log('6. Program: ' + tampil(ddP))
+
+    // 7. Vendor (NPWP)
+    let npwp = document.querySelector('input[name="npwp"], input[formcontrolname="npwp"]')
+    if (!npwp) {
+      const lb = labelEl('NPWP')
+      npwp = lb && [...document.querySelectorAll('input')].find((i) => visible(i) && after(lb, i))
+    }
+    if (!npwp) henti('kolom NPWP tidak ditemukan')
+
+    if (norm(npwp.value)) {
+      log('7. NPWP sudah terisi, pencarian vendor dilewati')
+    } else {
+      const tombolCari = [...document.querySelectorAll('button')].find((b) => visible(b) && !b.disabled && after(npwp, b))
+      if (!tombolCari) henti('tombol cari NPWP tidak ditemukan')
+      tombolCari.click()
+      if (!(await tunggu(() => !!dialogWP(), 8000))) henti('jendela Data Wajib Pajak tidak terbuka')
+      await sleep(800)
+
+      const dlg = dialogWP()
+      const kolomNama = dlg.querySelector('input[formcontrolname="filterTextNama"], input[name="filterTextNama"]')
+      if (!kolomNama) henti('kolom nama di jendela pencarian tidak ditemukan')
+      const kolomFilter = [...dlg.querySelectorAll('input[type="text"]')].filter((i) => visible(i) && !i.readOnly)
+      const kolomAkhir = kolomFilter[Math.min(kolomFilter.length, 3) - 1] || kolomNama
+      const tombolFilter = [...dlg.querySelectorAll('button')].find((b) => visible(b) && !b.disabled && after(kolomAkhir, b))
+      if (!tombolFilter) henti('tombol cari di jendela tidak ditemukan')
+
+      const barisData = () => [...dlg.querySelectorAll('tbody tr')].filter((r) => r.querySelectorAll('td').length >= 3)
+      const snap = () => [...dlg.querySelectorAll('tbody tr')].map((r) => norm(r.textContent)).join('||')
+      const sebelum = snap()
+
+      isiTeks(kolomNama, DATA.vendor)
+      await sleep(300)
+      tombolFilter.click()
+      const tVendor = Date.now()
+      while (Date.now() - tVendor < 8000 && snap() === sebelum) await sleep(300)
+      await sleep(700)
+
+      const rows = barisData()
+      const namaRow = (r) => norm(r.querySelectorAll('td')[2]?.textContent)
+      if (!rows.length) henti('tidak ada hasil untuk "' + DATA.vendor + '"')
+
+      const want = stripNama(DATA.vendor)
+      const kandidat = rows.filter((r) => stripNama(namaRow(r)).includes(want))
+      const persis = kandidat.filter((r) => stripNama(namaRow(r)) === want)
+      const target = persis.length === 1 ? persis[0] : kandidat.length === 1 ? kandidat[0] : null
+      if (!target) {
+        henti(
+          (kandidat.length ? 'kandidat lebih dari satu: ' : 'tidak ada nama yang cocok. Hasil: ') +
+            rows.slice(0, 10).map(namaRow).join(' | ')
+        )
+      }
+      target.click()
+      await sleep(500)
+
+      const tombolPilih = [...dlg.querySelectorAll('button')].find((b) => visible(b) && norm(b.textContent) === 'Pilih')
+      if (!tombolPilih) henti('tombol Pilih tidak ditemukan')
+      tombolPilih.click()
+      if (!(await tunggu(() => !dialogWP(), 8000))) henti('jendela tidak menutup setelah Pilih')
+      await sleep(800)
+      if (!norm(npwp.value)) henti('jendela menutup tetapi kolom NPWP masih kosong')
+      log('7. Vendor dipilih: ' + namaRow(target))
+    }
+
+    // 8. Uraian
+    const ta =
+      document.querySelector('textarea[formcontrolname="uraian"], textarea[name="uraian"]') ||
+      [...document.querySelectorAll('textarea')].find(visible)
+    if (!ta) henti('kolom Uraian tidak ditemukan')
+    if (norm(ta.value) !== norm(DATA.uraian)) {
+      ta.focus()
+      isiTeks(ta, DATA.uraian)
+      await sleep(400)
+    }
+    if (norm(ta.value) !== norm(DATA.uraian)) henti('Uraian tidak bertahan. Tampil: "' + ta.value + '"')
+    log('8. Uraian terisi')
+
+    // 9. Aktifitas
+    const ddA = dropdownByLabel('Aktifitas')
+    if (!ddA) henti('dropdown Aktifitas tidak ditemukan')
+    if (!low(tampil(ddA)).startsWith(low(DATA.aktifitas))) {
+      const err = await pilihDropdownCari(ddA, DATA.aktifitas)
+      if (err) henti('Aktifitas, ' + err)
+    }
+    log('9. Aktifitas: ' + tampil(ddA))
+
+    // 10. KRO (menunggu aktif setelah Aktifitas)
+    const ddK = dropdownByLabel('KRO')
+    if (!ddK) henti('dropdown KRO tidak ditemukan')
+    if (!low(tampil(ddK)).startsWith(low(DATA.kro))) {
+      const err = await pilihDropdownCari(ddK, DATA.kro)
+      if (err) henti('KRO, ' + err)
+    }
+    log('10. KRO: ' + tampil(ddK))
+
+    // 11. Tambah (Detail Akun Belanja = tombol Tambah pertama setelah KRO)
+    let dT = dialogTambah()
+    if (dT) {
+      log('11. Jendela Tambah sudah terbuka, dipakai')
+    } else {
+      const lbKRO = labelEl('KRO')
+      const tambah = [...document.querySelectorAll('button')].find(
+        (b) => visible(b) && !b.disabled && norm(b.textContent) === 'Tambah' && after(lbKRO, b)
+      )
+      if (!tambah) henti('tombol Tambah tidak ditemukan')
+      tambah.click()
+      if (!(await tunggu(() => !!dialogTambah(), 8000))) henti('jendela Tambah tidak terbuka')
+      dT = dialogTambah()
+      log('11. Jendela Tambah terbuka')
+    }
+    await sleep(600)
+
+    // 12. Akun
+    const sudahPendetailan = !!dialogPend()
+    if (!sudahPendetailan) {
+      const ddAkun = dT.querySelector('.p-dropdown')
+      if (!ddAkun) henti('dropdown Akun tidak ditemukan di jendela Tambah')
+      if (!low(tampil(ddAkun)).startsWith(low(DATA.akun))) {
+        const err = await pilihDropdownCari(ddAkun, DATA.akun)
+        if (err) henti('Akun, ' + err)
+      }
+      log('12. Akun: ' + tampil(ddAkun))
+
+      // 13. Pendetailan lalu Tambah
+      const tombolPend = tombolDi(dT, 'Pendetailan')
+      if (!tombolPend || tombolPend.disabled) henti('tombol Pendetailan tidak ditemukan atau nonaktif')
+      tombolPend.click()
+      if (!(await tunggu(() => !!dialogPend(), 8000))) henti('jendela Pendetailan tidak terbuka')
+      await sleep(1000)
+      const tombolTambahP = tombolDi(dialogPend(), 'Tambah')
+      if (!tombolTambahP) {
+        catatJendela(dialogPend())
+        henti('tombol Tambah di jendela Pendetailan tidak ditemukan')
+      }
+      if (!tombolTambahP.disabled) tombolTambahP.click()
+      log('13. Pendetailan terbuka')
+    } else {
+      log('12-13. Jendela Pendetailan sudah terbuka, dilanjutkan')
+    }
+
+    // 14. Buka pencarian COA lewat tombol "..."
+    const dP = dialogPend()
+    if (!dP) henti('jendela Pendetailan COA tidak terbuka')
+    const inpCOA = dP.querySelector('input[formcontrolname="txtKodeCoa"]')
+    if (!inpCOA) henti('kolom Kode COA tidak ditemukan')
+    const tombolTitik = [...dP.querySelectorAll('button')]
+      .filter((b) => visible(b) && after(inpCOA, b))
+      .find((b) => norm(b.textContent) === '...')
+    if (!tombolTitik) henti('tombol "..." di samping Kode COA tidak ditemukan')
+    if (tombolTitik.disabled) {
+      const tambahP = tombolDi(dP, 'Tambah')
+      if (!tambahP || tambahP.disabled) henti('tombol "..." nonaktif dan Tambah di Pendetailan tidak tersedia')
+      tambahP.click()
+      await tunggu(() => !tombolTitik.disabled, 5000)
+    }
+    if (tombolTitik.disabled) henti('tombol "..." tetap nonaktif')
+
+    const jumlahDialog = dialogTampak().length
+    tombolTitik.click()
+    if (!(await tunggu(() => dialogTampak().length > jumlahDialog, 8000))) {
+      catatJendela(dP)
+      henti('jendela pencarian tidak muncul setelah klik "..."')
+    }
+    const dC = dialogAtas()
+    await sleep(800)
+    log('14. Jendela pencarian: ' + (norm(dC.querySelector('.p-dialog-title')?.textContent) || '(tanpa judul)'))
+
+    // 15. Dropdown dasar pencarian harus "Item", lalu ketik item dan Enter
+    const ddCari = [...dC.querySelectorAll('.p-dropdown')].find(visible)
+    if (ddCari && low(tampil(ddCari)) !== 'item') {
+      const err = await pilihDropdown(ddCari, testerBiasa('Item'))
+      if (err) henti('dropdown pencarian COA, ' + err)
+    }
+    const kolomCari = [...dC.querySelectorAll('input')].find(
+      (i) => visible(i) && !i.readOnly && !i.disabled && !i.closest('.p-dropdown') && (!i.type || i.type === 'text')
+    )
+    if (!kolomCari) {
+      catatJendela(dC)
+      henti('kolom cari item tidak ditemukan')
+    }
+    const snapC = () => [...dC.querySelectorAll('tbody tr')].map((r) => norm(r.textContent)).join('||')
+    const sebelumC = snapC()
+    kolomCari.focus()
+    isiTeks(kolomCari, DATA.item)
+    kolomCari.focus()
+    await sleep(300)
+    tekanEnter(kolomCari)
+    const tCari = Date.now()
+    while (Date.now() - tCari < 8000 && snapC() === sebelumC) await sleep(300)
+    await sleep(700)
+
+    const barisC = [...dC.querySelectorAll('tbody tr')].filter(
+      (r) => r.querySelector('td') && norm(r.textContent) && !/tidak ada|no records|empty/i.test(r.textContent)
+    )
+    if (!barisC.length) {
+      catatJendela(dC)
+      henti('tidak ada hasil untuk item "' + DATA.item + '"')
+    }
+    log('15. Hasil pencarian item: ' + barisC.length + ' baris')
+
+    // 16. Klik baris pertama lalu Ok
+    barisC[0].querySelector('td').click()
+    await sleep(500)
+    const tombolOk = [...dC.querySelectorAll('button')].find((b) => visible(b) && !b.disabled && /^ok$/i.test(norm(b.textContent)))
+    if (!tombolOk) {
+      catatJendela(dC)
+      henti('tombol Ok tidak ditemukan')
+    }
+    tombolOk.click()
+    if (!(await tunggu(() => !visible(dC), 6000))) henti('jendela pencarian tidak menutup setelah Ok')
+    await sleep(700)
+
+    const baca = (fc) => norm(dialogPend()?.querySelector('input[formcontrolname="' + fc + '"]')?.value)
+    await tunggu(() => !!baca('txtItem'), 4000)
+    log('   Rincian Output: ' + baca('txtRincianOutput') + ' | Komponen: ' + baca('txtKomponen') + ' | Sub Komponen: ' + baca('txtSubKomponen'))
+    log('   Item: ' + baca('txtItem') + ' | Sisa Pagu: ' + baca('txtSisaPagu'))
+    if (!baca('txtItem').startsWith(DATA.item)) {
+      henti('Item terisi "' + baca('txtItem') + '", tidak sama dengan target "' + DATA.item + '". Tidak disimpan.')
+    }
+
+    // 17. Nilai
+    const nilai = dialogPend().querySelector('input[formcontrolname="txtNilai"]')
+    if (!nilai || nilai.disabled) henti('kolom Nilai tidak ditemukan atau nonaktif')
+    if (!(await ketikAngka(nilai, DATA.nilai))) {
+      henti('angka Nilai tidak sesuai target ' + DATA.nilai + '. Tampil: "' + nilai.value + '"')
+    }
+    log('17. Nilai: ' + nilai.value)
+
+    // 18. Simpan di Pendetailan
+    const simpanP = tombolDi(dialogPend(), 'Simpan')
+    if (!simpanP || simpanP.disabled) henti('tombol Simpan di Pendetailan tidak tersedia')
+    if (KONFIRMASI && !confirm('Klik Simpan di Pendetailan?\n\nItem: ' + baca('txtItem') + '\nNilai: ' + nilai.value)) {
+      return log('18. Dibatalkan oleh kamu, Simpan tidak diklik')
+    }
+    const barisSebelum = barisPend().length
+    simpanP.click()
+    const keluarAktif = () => {
+      const k = tombolDi(dialogPend(), 'Keluar')
+      return !!k && !k.disabled
+    }
+    const berhasilP = await tunggu(keluarAktif, 8000)
+    await sleep(600)
+    if (!berhasilP) {
+      diagnosa()
+      henti('tombol Keluar tetap nonaktif setelah Simpan di Pendetailan')
+    }
+    log('18. Simpan di Pendetailan. Baris tabel: ' + barisSebelum + ' -> ' + barisPend().length)
+
+    // 19. Keluar dari Pendetailan
+    tombolDi(dialogPend(), 'Keluar').click()
+    if (!(await tunggu(() => !dialogPend(), 6000))) {
+      diagnosa()
+      henti('jendela Pendetailan tidak menutup setelah Keluar (mungkin ada konfirmasi)')
+    }
+    log('19. Keluar dari Pendetailan')
+    await sleep(700)
+
+    // 20. Simpan di jendela Tambah
+    const dT2 = dialogTambah()
+    if (!dT2) henti('jendela Tambah (Input/Ubah Akun Belanja) tidak ditemukan')
+    const simpanT = tombolDi(dT2, 'Simpan')
+    if (!simpanT || simpanT.disabled) henti('tombol Simpan di jendela Tambah tidak tersedia')
+    if (KONFIRMASI && !confirm('Klik Simpan di jendela Tambah (memasukkan akun belanja ke tabel)?')) {
+      return log('20. Dibatalkan oleh kamu, Simpan tidak diklik')
+    }
+    simpanT.click()
+    const tutupT = await tunggu(() => !visible(dT2), 8000)
+    await sleep(800)
+    const pesan = toasts()
+    if (pesan.length) log('   Pesan di layar: ' + pesan.join(' | '))
+    if (!tutupT) {
+      diagnosa()
+      henti('jendela Tambah tidak menutup setelah Simpan (cek pesan di layar)')
+    }
+    log('20. Simpan di jendela Tambah, jendela menutup')
+
+    // 21. Tabel Detail Akun Belanja
+    const lbDAB = [...document.querySelectorAll('*')].find(
+      (e) => e.children.length === 0 && norm(e.textContent) === 'Detail Akun Belanja' && visible(e) && (!box || !box.contains(e))
+    )
+    const tabel = lbDAB && [...document.querySelectorAll('table')].find((tb) => after(lbDAB, tb) && visible(tb))
+    if (tabel) {
+      const rows = [...tabel.querySelectorAll('tbody tr')].filter((r) => r.querySelector('td') && norm(r.textContent))
+      log('21. Tabel Detail Akun Belanja: ' + rows.length + ' baris')
+      rows.slice(0, 5).forEach((r, i) => log('   ' + (i + 1) + ') ' + [...r.querySelectorAll('td')].map((x) => norm(x.textContent)).join(' | ')))
+    } else {
+      log('21. Tabel Detail Akun Belanja tidak ditemukan, periksa dengan mata')
+    }
+
+    // 22. Simpan utama
+    const simpanUtama = [...document.querySelectorAll('button')].find(
+      (b) => visible(b) && !b.closest('.p-dialog') && (!box || !box.contains(b)) && norm(b.textContent) === 'Simpan'
+    )
+    if (!SIMPAN_UTAMA) {
+      log('22. Simpan utama TIDAK diklik. Periksa form, lalu klik Simpan sendiri' + (simpanUtama ? '.' : ' (tombolnya belum tampil).'))
+      return
+    }
+    if (!simpanUtama || simpanUtama.disabled) henti('tombol Simpan utama tidak ditemukan atau nonaktif')
+    if (KONFIRMASI_UTAMA && !confirm('Klik Simpan UTAMA (menyimpan perintah bayar)?\n\nPeriksa dulu form di layar.')) {
+      return log('22. Dibatalkan oleh kamu, Simpan utama tidak diklik')
+    }
+    simpanUtama.click()
+    await sleep(2000)
+    const pesan2 = toasts()
+    if (pesan2.length) log('   Pesan di layar: ' + pesan2.join(' | '))
+    const dlg2 = dialogTampak()
+    if (dlg2.length) log('   Dialog terbuka: ' + dlg2.map(ringkasDialog).join(' || '))
+    log('22. Simpan utama diklik. Periksa hasilnya di layar.')
+  } catch (e) {
+    log('BERHENTI: ' + e.message)
+  }
+})()</script>
+
+  <script>
+    const TEMPLATE_KEY = 'spby_script_template';
+    const HISTORY_KEY = 'spby_script_history';
+    // Nilai awal opsi untuk template bawaan (penanda __NAMA__) dan label untuk opsi yang dikenal
+    const DEFAULT_FLAGS = { TAMPILKAN_LOG: true, KONFIRMASI: false, SIMPAN_UTAMA: false, KONFIRMASI_UTAMA: true };
+    const LABEL_OPSI = { TAMPILKAN_LOG: 'Tampilkan Kotak Log Hitam' };
+
+    // Menemukan blok "const DATA = { ... }" di dalam skrip (aman terhadap kurung kurawal di dalam string/komentar)
+    function cariBlokData(src) {
+      const m = /\b(?:const|let|var)\s+DATA\s*=\s*\{/.exec(src);
+      if (!m) return null;
+      let depth = 0;
+      for (let i = m.index + m[0].length - 1; i < src.length; i++) {
+        const c = src[i];
+        if (c === "'" || c === '"' || c === '`') {
+          i++;
+          while (i < src.length && src[i] !== c) {
+            if (src[i] === '\\') i++;
+            i++;
+          }
+        } else if (c === '/' && src[i + 1] === '/') {
+          while (i < src.length && src[i] !== '\n') i++;
+        } else if (c === '/' && src[i + 1] === '*') {
+          const e = src.indexOf('*/', i + 2);
+          if (e < 0) return null;
+          i = e + 1;
+        } else if (c === '{') {
+          depth++;
+        } else if (c === '}') {
+          depth--;
+          if (depth === 0) return { start: m.index, end: i + 1 };
+        }
+      }
+      return null;
+    }
+
+    // Membaca isi const DATA dari template sebagai objek (null jika tidak ada / bukan objek literal biasa)
+    function bacaDataTemplate(tpl) {
+      const b = cariBlokData(tpl);
+      if (!b) return null;
+      const literal = tpl.slice(b.start, b.end).replace(/^[^{]*/, '');
+      try {
+        const o = Function('"use strict"; return (' + literal + ')')();
+        return o && typeof o === 'object' && !Array.isArray(o) ? o : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Membaca opsi di bagian kepala template: "const NAMA = true|false|angka" (huruf besar) atau penanda __NAMA__
+    function bacaOpsiTemplate(tpl) {
+      const hasil = {};
+      const potong = tpl.search(/\n\s*(?:const lama\b|let box\b|async function\b|function\b)/);
+      const kepala = potong > 0 ? tpl.slice(0, potong) : tpl;
+      const reLiteral = /\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*(true|false|-?\d+(?:\.\d+)?)\b/g;
+      let m;
+      while ((m = reLiteral.exec(kepala))) {
+        if (!(m[1] in hasil)) hasil[m[1]] = m[2] === 'true' ? true : m[2] === 'false' ? false : Number(m[2]);
+      }
+      const rePenanda = /__([A-Z][A-Z0-9_]*)__/g;
+      while ((m = rePenanda.exec(kepala))) {
+        if (m[1] !== 'DATA_LINE' && !(m[1] in hasil)) hasil[m[1]] = m[1] in DEFAULT_FLAGS ? DEFAULT_FLAGS[m[1]] : false;
+      }
+      return hasil;
+    }
+
+    new Vue({
+      el: '#app',
+      data: {
+        form: { ...DEFAULT_DATA },
+        flags: { ...DEFAULT_FLAGS },
+        rawInput: '',
+        parseStatus: '',
+        parseError: false,
+        copied: false,
+        history: [],
+        templateTersimpan: '',
+        templateDraft: '',
+        templateStatus: '',
+        templateError: false
+      },
+      created() {
+        try {
+          const saved = localStorage.getItem(HISTORY_KEY);
+          if (saved) this.history = JSON.parse(saved);
+        } catch (e) {}
+        try {
+          const tpl = localStorage.getItem(TEMPLATE_KEY);
+          if (tpl) {
+            this.templateTersimpan = tpl;
+            this.templateDraft = tpl;
+          }
+        } catch (e) {}
+        this.terapkanTemplate(this.templateTersimpan);
+      },
+      watch: {
+        form: {
+          deep: true,
+          handler() {
+            this.syncRawFromForm();
+          }
+        }
+      },
+      computed: {
+        kunciForm() {
+          return Object.keys(this.form);
+        },
+        kunciOpsi() {
+          return Object.keys(this.flags);
+        },
+        formattedDataLine() {
+          const esc = (val) => String(val ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, '\\n');
+          const kunci = (k) => (/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k));
+          const nilai = (v) => (typeof v === 'string' || v === undefined || v === null ? "'" + esc(v) + "'" : JSON.stringify(v));
+          const baris = Object.keys(this.form).map((k) => kunci(k) + ': ' + nilai(this.form[k]));
+          return baris.length ? 'const DATA = { ' + baris.join(', ') + ' }' : 'const DATA = {}';
+        },
+        activeTemplate() {
+          return this.templateTersimpan || this.defaultTemplate();
+        },
+        generatedScript() {
+          return this.renderTemplate(this.activeTemplate);
+        },
+        // Pemeriksaan template yang sedang diedit: sintaks, keberadaan const DATA, kolom dan opsi yang dikenali
+        templateInfo() {
+          const tpl = this.templateDraft;
+          if (!tpl.trim()) return null;
+          const data = bacaDataTemplate(tpl);
+          const hasData = tpl.includes('__DATA_LINE__') || !!cariBlokData(tpl);
+          let syntaxOk = true;
+          let syntaxMsg = '';
+          try {
+            new Function(this.renderTemplate(tpl)); // hanya dikompilasi untuk cek sintaks, tidak dijalankan
+          } catch (e) {
+            syntaxOk = false;
+            syntaxMsg = e.message;
+          }
+          return {
+            hasData,
+            kolom: data ? Object.keys(data) : [],
+            flags: Object.keys(bacaOpsiTemplate(tpl)),
+            syntaxOk,
+            syntaxMsg,
+            panjang: tpl.length
+          };
+        }
+      },
+      methods: {
+        // ---- Template ----
+        defaultTemplate() {
+          return document.getElementById('script-template').textContent;
+        },
+        // Menyesuaikan form (kolom DATA) dan opsi dengan isi template; tanpa template = bawaan
+        terapkanTemplate(tpl) {
+          const sumber = tpl || this.defaultTemplate();
+          const data = tpl ? bacaDataTemplate(tpl) : null;
+          this.form = data ? { ...data } : { ...DEFAULT_DATA };
+          this.flags = bacaOpsiTemplate(sumber);
+          this.rawInput = this.formattedDataLine;
+        },
+        // Mengisi template: baris DATA dan nilai opsi diganti sesuai form (penanda __X__ maupun baris const asli)
+        renderTemplate(tpl) {
+          let out = tpl;
+          const dataLine = this.formattedDataLine;
+          if (out.includes('__DATA_LINE__')) {
+            out = out.split('__DATA_LINE__').join(dataLine);
+          } else {
+            const b = cariBlokData(out);
+            if (b) out = out.slice(0, b.start) + dataLine + out.slice(b.end);
+          }
+          Object.keys(this.flags).forEach((nama) => {
+            const v = this.flags[nama];
+            const nilai = typeof v === 'boolean' ? String(v) : String(Number(v) || 0);
+            out = out.split('__' + nama + '__').join(nilai);
+            out = out.replace(new RegExp('(\\bconst\\s+' + nama + '\\s*=\\s*)(?:true|false|-?\\d+(?:\\.\\d+)?)\\b'), (m, awal) => awal + nilai);
+          });
+          return out;
+        },
+        simpanTemplate() {
+          const info = this.templateInfo;
+          this.templateError = true;
+          if (!info) {
+            this.templateStatus = 'Template kosong';
+          } else if (!info.syntaxOk) {
+            this.templateStatus = 'Tidak disimpan: sintaks tidak valid (' + info.syntaxMsg + ')';
+          } else if (!info.hasData) {
+            this.templateStatus = 'Tidak disimpan: baris const DATA tidak ditemukan di template';
+          } else {
+            try {
+              localStorage.setItem(TEMPLATE_KEY, this.templateDraft);
+              this.templateTersimpan = this.templateDraft;
+              this.terapkanTemplate(this.templateTersimpan);
+              this.templateError = false;
+              this.templateStatus = '✓ Template disimpan. Form disesuaikan: ' + this.kunciForm.length + ' kolom, ' + this.kunciOpsi.length + ' opsi';
+            } catch (e) {
+              this.templateStatus = 'Gagal menyimpan ke localStorage (penyimpanan penuh atau diblokir)';
+            }
+          }
+          setTimeout(() => (this.templateStatus = ''), 5000);
+        },
+        hapusTemplate() {
+          if (!confirm('Kembalikan ke template bawaan? Template kustom yang tersimpan akan dihapus.')) return;
+          try { localStorage.removeItem(TEMPLATE_KEY); } catch (e) {}
+          this.templateTersimpan = '';
+          this.templateDraft = '';
+          this.terapkanTemplate('');
+          this.templateError = false;
+          this.templateStatus = '✓ Kembali ke template bawaan';
+          setTimeout(() => (this.templateStatus = ''), 4000);
+        },
+
+        // ---- Form ----
+        labelDari(k) {
+          const s = String(k).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
+          return s.charAt(0).toUpperCase() + s.slice(1);
+        },
+        labelOpsi(n) {
+          return LABEL_OPSI[n] || n;
+        },
+        panjang(k) {
+          return /uraian|keterangan|deskripsi|catatan|alamat/i.test(k) || String(this.form[k] ?? '').length > 60;
+        },
+        isNilai(k) {
+          return /nilai|nominal/i.test(k);
+        },
+        syncRawFromForm() {
+          if (document.activeElement?.tagName !== 'TEXTAREA' || !document.activeElement.classList.contains('text-amber-200')) {
+            this.rawInput = this.formattedDataLine;
+          }
+        },
+        parseRawData() {
+          const txt = this.rawInput.trim();
+          if (!txt) {
+            this.parseStatus = '';
+            return;
+          }
+          try {
+            const match = txt.match(/\{[\s\S]*\}/);
+            if (!match) throw new Error('Kurung kurawal { ... } tidak ditemukan');
+
+            const parsed = Function('"use strict"; return (' + match[0] + ')')();
+            if (!parsed || typeof parsed !== 'object') throw new Error('Format objek tidak valid');
+
+            const baru = { ...this.form };
+            let tambah = 0;
+            Object.keys(parsed).forEach((k) => {
+              if (!(k in baru)) tambah++;
+              baru[k] = parsed[k] === undefined || parsed[k] === null ? '' : parsed[k];
+            });
+            this.form = baru;
+
+            this.parseError = false;
+            this.parseStatus = '✓ Berhasil diparsing' + (tambah ? ' (+' + tambah + ' kolom baru)' : '');
+          } catch (err) {
+            this.parseError = true;
+            this.parseStatus = 'Format belum lengkap / error sintaks';
+          }
+        },
+        bersihkanNilai(k) {
+          this.form[k] = String(this.form[k]).replace(/\D/g, '');
+        },
+        formatRupiah(angka) {
+          const num = parseInt(String(angka).replace(/\D/g, ''), 10);
+          return isNaN(num) ? '0' : num.toLocaleString('id-ID');
+        },
+        resetDefault() {
+          this.terapkanTemplate(this.templateTersimpan);
+          this.parseStatus = 'Reset ke contoh awal';
+          this.parseError = false;
+        },
+
+        // ---- Output ----
+        async copyOutput() {
+          try {
+            await navigator.clipboard.writeText(this.generatedScript);
+          } catch (e) {
+            const ta = document.createElement('textarea');
+            ta.value = this.generatedScript;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+          }
+          this.copied = true;
+          setTimeout(() => (this.copied = false), 2000);
+        },
+        downloadScript() {
+          const blob = new Blob([this.generatedScript], { type: 'application/javascript;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          const kNama = this.kunciForm.find((k) => /vendor|nama/i.test(k));
+          const kNilai = this.kunciForm.find((k) => this.isNilai(k));
+          const safeVendor = String((kNama && this.form[kNama]) || 'script').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+          a.href = url;
+          a.download = `autofill_${safeVendor}_${(kNilai && this.form[kNilai]) || '0'}.js`;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+
+        // ---- Riwayat ----
+        ringkasRiwayat(item) {
+          return Object.keys(item).map((k) => String(item[k] ?? '')).filter(Boolean).slice(0, 3).join(' • ');
+        },
+        terpanjangRiwayat(item) {
+          return Object.keys(item).map((k) => String(item[k] ?? '')).reduce((a, b) => (b.length > a.length ? b : a), '');
+        },
+        simpanRiwayat() {
+          this.history.unshift({ ...this.form });
+          if (this.history.length > 20) this.history.pop();
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(this.history));
+        },
+        // Hanya kolom yang ada di form saat ini yang diisi dari riwayat (mengikuti template aktif)
+        muatRiwayat(item) {
+          const baru = { ...this.form };
+          let terisi = 0;
+          Object.keys(item).forEach((k) => {
+            if (k in baru) { baru[k] = item[k]; terisi++; }
+          });
+          this.form = baru;
+          this.rawInput = this.formattedDataLine;
+          this.parseStatus = terisi ? '✓ Dimuat dari riwayat (' + terisi + ' kolom)' : 'Riwayat tidak cocok dengan kolom template saat ini';
+          this.parseError = !terisi;
+        },
+        hapusRiwayat(idx) {
+          this.history.splice(idx, 1);
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(this.history));
+        },
+        hapusSemuaRiwayat() {
+          this.history = [];
+          localStorage.removeItem(HISTORY_KEY);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
